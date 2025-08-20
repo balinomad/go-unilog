@@ -34,8 +34,13 @@ type stdLogger struct {
 	skipCaller atomic.Int32
 }
 
-// Ensure stdLogger implements unilog.Logger.
-var _ unilog.Logger = (*stdLogger)(nil)
+// Ensure slogLogger implements the following interfaces.
+var (
+	_ unilog.Logger        = (*stdLogger)(nil)
+	_ unilog.Configurator  = (*stdLogger)(nil)
+	_ unilog.Cloner        = (*stdLogger)(nil)
+	_ unilog.CallerSkipper = (*stdLogger)(nil)
+)
 
 // New creates a new unilog.Logger instance backed by the standard log.
 func New(opts ...LogOption) (unilog.Logger, error) {
@@ -67,11 +72,6 @@ func New(opts ...LogOption) (unilog.Logger, error) {
 	l.skipCaller.Store(int32(o.skipCaller + internalSkipFrames))
 
 	return l, nil
-}
-
-// Sync is a no-op because the standard log does not buffer log output.
-func (l *stdLogger) Sync() error {
-	return nil
 }
 
 // log is the internal logging function used by the unilog.Logger interface. It adds caller and
@@ -114,22 +114,19 @@ func (l *stdLogger) Log(_ context.Context, level unilog.LogLevel, msg string, ke
 	l.log(level, msg, keyValues...)
 }
 
+// Enabled checks if the given log level is enabled.
+func (l *stdLogger) Enabled(level unilog.LogLevel) bool {
+	return level >= unilog.LogLevel(l.lvl.Load())
+}
+
 // With returns a new logger with the provided keyValues added to the context.
 func (l *stdLogger) With(keyValues ...any) unilog.Logger {
 	if len(keyValues) < 2 {
 		return l
 	}
 
-	// Return a new logger with the combined fields
-	clone := &stdLogger{
-		l:          l.l,
-		out:        l.out,
-		fields:     l.fields.WithPairs(keyValues),
-		withCaller: l.withCaller,
-		withTrace:  l.withTrace,
-	}
-	clone.lvl.Store(l.lvl.Load())
-	clone.skipCaller.Store(l.skipCaller.Load())
+	clone := l.clone()
+	clone.fields = l.fields.WithPairs(keyValues)
 
 	return clone
 }
@@ -140,16 +137,8 @@ func (l *stdLogger) WithGroup(name string) unilog.Logger {
 		return l
 	}
 
-	// Return a new logger with the new group prefix
-	clone := &stdLogger{
-		l:          l.l,
-		out:        l.out,
-		fields:     l.fields.WithPrefix(name),
-		withCaller: l.withCaller,
-		withTrace:  l.withTrace,
-	}
-	clone.lvl.Store(l.lvl.Load())
-	clone.skipCaller.Store(l.skipCaller.Load())
+	clone := l.clone()
+	clone.fields = l.fields.WithPrefix(name)
 
 	return clone
 }
@@ -159,7 +148,9 @@ func (l *stdLogger) SetLevel(level unilog.LogLevel) error {
 	if err := unilog.ValidateLogLevel(level); err != nil {
 		return err
 	}
+
 	l.lvl.Store(int32(level))
+
 	return nil
 }
 
@@ -183,13 +174,7 @@ func (l *stdLogger) WithCallerSkip(skip int) (unilog.Logger, error) {
 		return l, nil
 	}
 
-	clone := &stdLogger{
-		l:          l.l,
-		out:        l.out,
-		withTrace:  l.withTrace,
-		withCaller: l.withCaller,
-	}
-	clone.lvl.Store(l.lvl.Load())
+	clone := l.clone()
 	clone.skipCaller.Store(int32(skip + internalSkipFrames))
 
 	return clone, nil
@@ -204,79 +189,51 @@ func (l *stdLogger) WithCallerSkipDelta(delta int) (unilog.Logger, error) {
 	return l.WithCallerSkip(l.CallerSkip() + delta)
 }
 
-// Enabled checks if the given log level is enabled.
-func (l *stdLogger) Enabled(level unilog.LogLevel) bool {
-	return level >= unilog.LogLevel(l.lvl.Load())
+// clone returns a deep copy of the logger.
+func (l *stdLogger) clone() *stdLogger {
+	clone := &stdLogger{
+		l:          l.l,
+		out:        l.out,
+		withTrace:  l.withTrace,
+		withCaller: l.withCaller,
+	}
+	clone.lvl.Store(l.lvl.Load())
+	clone.skipCaller.Store(l.skipCaller.Load())
+
+	return clone
 }
 
-// Debug logs a message at the debug level. It is a convenience wrapper around Log,
-// using the current background context and the LevelDebug level.
-func (l *stdLogger) Debug(msg string, keyValues ...any) {
+// Clone returns a deep copy of the logger as a unilog.Logger.
+func (l *stdLogger) Clone() unilog.Logger {
+	return l.clone()
+}
+
+// Debug logs a message at the debug level.
+func (l *stdLogger) Debug(_ context.Context, msg string, keyValues ...any) {
 	l.log(unilog.LevelDebug, msg, keyValues...)
 }
 
-// Info logs a message at the info level. It is a convenience wrapper around Log,
-// using the current background context and the LevelInfo level.
-func (l *stdLogger) Info(msg string, keyValues ...any) {
+// Info logs a message at the info level.
+func (l *stdLogger) Info(_ context.Context, msg string, keyValues ...any) {
 	l.log(unilog.LevelInfo, msg, keyValues...)
 }
 
-// Warn logs a message at the warn level. It is a convenience wrapper around Log,
-// using the current background context and the LevelWarn level.
-func (l *stdLogger) Warn(msg string, keyValues ...any) {
+// Warn logs a message at the warn level.
+func (l *stdLogger) Warn(_ context.Context, msg string, keyValues ...any) {
 	l.log(unilog.LevelWarn, msg, keyValues...)
 }
 
-// Error logs a message at the error level. It is a convenience wrapper around Log,
-// using the current background context and the LevelError level.
-func (l *stdLogger) Error(msg string, keyValues ...any) {
+// Error logs a message at the error level.
+func (l *stdLogger) Error(_ context.Context, msg string, keyValues ...any) {
 	l.log(unilog.LevelError, msg, keyValues...)
 }
 
-// Critical logs a message at the critical level. It is a convenience wrapper around Log,
-// using the current background context and the LevelCritical level.
-func (l *stdLogger) Critical(msg string, keyValues ...any) {
+// Critical logs a message at the critical level.
+func (l *stdLogger) Critical(_ context.Context, msg string, keyValues ...any) {
 	l.log(unilog.LevelCritical, msg, keyValues...)
 }
 
-// Fatal logs a message at the fatal level. It is a convenience wrapper around Log,
-// using the current background context and the LevelFatal level.
-func (l *stdLogger) Fatal(msg string, keyValues ...any) {
-	l.log(unilog.LevelFatal, msg, keyValues...)
-}
-
-// DebugCtx logs a message at the debug level. It is a convenience wrapper around Log,
-// using the provided context and the LevelDebug level.
-func (l *stdLogger) DebugCtx(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.LevelDebug, msg, keyValues...)
-}
-
-// InfoCtx logs a message at the info level. It is a convenience wrapper around Log,
-// using the provided context and the LevelInfo level.
-func (l *stdLogger) InfoCtx(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.LevelInfo, msg, keyValues...)
-}
-
-// WarnCtx logs a message at the warn level. It is a convenience wrapper around Log,
-// using the provided context and the LevelWarn level.
-func (l *stdLogger) WarnCtx(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.LevelWarn, msg, keyValues...)
-}
-
-// ErrorCtx logs a message at the error level. It is a convenience wrapper around Log,
-// using the provided context and the LevelError level.
-func (l *stdLogger) ErrorCtx(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.LevelError, msg, keyValues...)
-}
-
-// CriticalCtx logs a message at the critical level. It is a convenience wrapper around Log,
-// using the provided context and the LevelCritical level.
-func (l *stdLogger) CriticalCtx(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.LevelCritical, msg, keyValues...)
-}
-
-// FatalCtx logs a message at the fatal level. It is a convenience wrapper around Log,
-// using the provided context and the LevelFatal level.
-func (l *stdLogger) FatalCtx(_ context.Context, msg string, keyValues ...any) {
+// Fatal logs a message at the fatal level and exits the process.
+func (l *stdLogger) Fatal(_ context.Context, msg string, keyValues ...any) {
 	l.log(unilog.LevelFatal, msg, keyValues...)
 }

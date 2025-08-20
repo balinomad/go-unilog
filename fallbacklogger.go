@@ -21,9 +21,11 @@ type fallbackLogger struct {
 	lvl atomic.Int32
 }
 
-// Ensure fallbackLogger implements the unilog.Logger and unilog.Configurator interfaces.
-var _ Logger = (*fallbackLogger)(nil)
-var _ Configurator = (*fallbackLogger)(nil)
+// Ensure fallbackLogger implements the following interfaces.
+var (
+	_ Logger       = (*fallbackLogger)(nil)
+	_ Configurator = (*fallbackLogger)(nil)
+)
 
 // newFallbackLogger creates a new fallbackLogger with the given output writer.
 func newFallbackLogger(w io.Writer, level LogLevel) (*fallbackLogger, error) {
@@ -65,11 +67,20 @@ func (l *fallbackLogger) Log(_ context.Context, level LogLevel, msg string, keyV
 	}
 }
 
+// Enabled returns true if the given log level is enabled.
+func (l *fallbackLogger) Enabled(level LogLevel) bool {
+	return level >= LogLevel(l.lvl.Load())
+}
+
 // With is a no-op for for the fallback logger. It returns itself unchanged.
-func (l *fallbackLogger) With(keyValues ...any) Logger { return l }
+func (l *fallbackLogger) With(keyValues ...any) Logger {
+	return l
+}
 
 // WithGroup is a no-op for for the fallback logger. It returns itself unchanged.
-func (l *fallbackLogger) WithGroup(name string) Logger { return l }
+func (l *fallbackLogger) WithGroup(name string) Logger {
+	return l
+}
 
 func (l *fallbackLogger) SetLevel(level LogLevel) error {
 	if err := ValidateLogLevel(level); err != nil {
@@ -82,11 +93,6 @@ func (l *fallbackLogger) SetLevel(level LogLevel) error {
 // SetOutput swaps the log output atomically without blocking logging.
 func (l *fallbackLogger) SetOutput(w io.Writer) error {
 	return l.w.Swap(w)
-}
-
-// Enabled returns true if the given log level is enabled.
-func (l *fallbackLogger) Enabled(level LogLevel) bool {
-	return level >= LogLevel(l.lvl.Load())
 }
 
 // Debug logs a message at the debug level.
