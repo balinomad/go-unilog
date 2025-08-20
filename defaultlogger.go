@@ -32,29 +32,32 @@ func Default() Logger {
 	return defaultLogger
 }
 
-// Package-level convenience functions that use the default logger.
-func Debug(msg string, keyValues ...any)    { Default().Debug(msg, keyValues...) }
-func Info(msg string, keyValues ...any)     { Default().Info(msg, keyValues...) }
-func Warn(msg string, keyValues ...any)     { Default().Warn(msg, keyValues...) }
-func Error(msg string, keyValues ...any)    { Default().Error(msg, keyValues...) }
-func Critical(msg string, keyValues ...any) { Default().Critical(msg, keyValues...) }
-func Fatal(msg string, keyValues ...any)    { Default().Fatal(msg, keyValues...) }
+// Debug logs a message at the debug level using the global default logger.
+func Debug(ctx context.Context, msg string, keyValues ...any) {
+	Default().Debug(ctx, msg, keyValues...)
+}
 
-func DebugCtx(ctx context.Context, msg string, keyValues ...any) {
-	Default().DebugCtx(ctx, msg, keyValues...)
+// Info logs a message at the info level using the global default logger.
+func Info(ctx context.Context, msg string, keyValues ...any) {
+	Default().Info(ctx, msg, keyValues...)
 }
-func InfoCtx(ctx context.Context, msg string, keyValues ...any) {
-	Default().InfoCtx(ctx, msg, keyValues...)
+
+// Warn logs a message at the warn level using the global default logger.
+func Warn(ctx context.Context, msg string, keyValues ...any) {
+	Default().Warn(ctx, msg, keyValues...)
 }
-func WarnCtx(ctx context.Context, msg string, keyValues ...any) {
-	Default().WarnCtx(ctx, msg, keyValues...)
+
+// Error logs a message at the error level using the global default logger.
+func Error(ctx context.Context, msg string, keyValues ...any) {
+	Default().Error(ctx, msg, keyValues...)
 }
-func ErrorCtx(ctx context.Context, msg string, keyValues ...any) {
-	Default().ErrorCtx(ctx, msg, keyValues...)
+
+// Critical logs a message at the critical level using the global default logger.
+func Critical(ctx context.Context, msg string, keyValues ...any) {
+	Default().Critical(ctx, msg, keyValues...)
 }
-func CriticalCtx(ctx context.Context, msg string, keyValues ...any) {
-	Default().CriticalCtx(ctx, msg, keyValues...)
-}
-func FatalCtx(ctx context.Context, msg string, keyValues ...any) {
-	Default().FatalCtx(ctx, msg, keyValues...)
+
+// Fatal logs a message at the fatal level using the global default logger and exits the process.
+func Fatal(ctx context.Context, msg string, keyValues ...any) {
+	Default().Fatal(ctx, msg, keyValues...)
 }

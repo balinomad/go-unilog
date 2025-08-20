@@ -114,7 +114,7 @@ func (l *fallbackLogger) Critical(ctx context.Context, msg string, keyValues ...
 	l.Log(ctx, LevelCritical, msg, keyValues...)
 }
 
-// Fatal logs a message at the fatal level.
+// Fatal logs a message at the fatal level and exits the process.
 func (l *fallbackLogger) Fatal(ctx context.Context, msg string, keyValues ...any) {
 	l.Log(ctx, LevelFatal, msg, keyValues...)
 }
