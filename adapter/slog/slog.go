@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"runtime/debug"
-	"sync/atomic"
 
 	"github.com/balinomad/go-caller"
 	"github.com/balinomad/go-unilog"
@@ -22,7 +21,7 @@ type slogLogger struct {
 	lvl        *slog.LevelVar
 	withTrace  bool
 	withCaller bool
-	skipCaller atomic.Int32
+	callerSkip int
 }
 
 // Ensure slogLogger implements the following interfaces.
@@ -72,8 +71,8 @@ func New(opts ...SlogOption) (unilog.Logger, error) {
 		out:        aw,
 		withTrace:  o.withTrace,
 		withCaller: o.withCaller,
+		callerSkip: o.callerSkip,
 	}
-	l.skipCaller.Store(int32(o.skipCaller + internalSkipFrames))
 
 	return l, nil
 }
@@ -89,8 +88,7 @@ func (l *slogLogger) log(ctx context.Context, level unilog.LogLevel, msg string,
 	args = append(args, keyValues...)
 
 	if l.withCaller {
-		skip := int(l.skipCaller.Load())
-		args = append(args, slog.SourceKey, caller.New(skip).Location())
+		args = append(args, slog.SourceKey, caller.New(l.callerSkip).Location())
 	}
 
 	if l.withTrace && level >= unilog.LevelError {
@@ -159,11 +157,10 @@ func (l *slogLogger) SetOutput(w io.Writer) error {
 
 // CallerSkip returns the current number of stack frames being skipped.
 func (l *slogLogger) CallerSkip() int {
-	return int(l.skipCaller.Load() - internalSkipFrames)
+	return l.callerSkip - internalSkipFrames
 }
 
 // WithCallerSkip returns a new Logger instance with the caller skip value updated.
-// The original logger is not modified.
 func (l *slogLogger) WithCallerSkip(skip int) (unilog.Logger, error) {
 	if skip < 0 {
 		return l, unilog.ErrInvalidSourceSkip
@@ -173,13 +170,12 @@ func (l *slogLogger) WithCallerSkip(skip int) (unilog.Logger, error) {
 	}
 
 	clone := l.clone()
-	clone.skipCaller.Store(int32(skip + internalSkipFrames))
+	clone.callerSkip = skip + internalSkipFrames
 
 	return clone, nil
 }
 
 // WithCallerSkipDelta returns a new Logger instance with the caller skip value altered by the given delta.
-// The original logger is not modified.
 func (l *slogLogger) WithCallerSkipDelta(delta int) (unilog.Logger, error) {
 	if delta == 0 {
 		return l, nil
@@ -189,16 +185,14 @@ func (l *slogLogger) WithCallerSkipDelta(delta int) (unilog.Logger, error) {
 
 // clone returns a deep copy of the logger.
 func (l *slogLogger) clone() *slogLogger {
-	clone := &slogLogger{
+	return &slogLogger{
 		l:          l.l,
 		out:        l.out,
 		lvl:        l.lvl,
 		withTrace:  l.withTrace,
 		withCaller: l.withCaller,
+		callerSkip: l.callerSkip,
 	}
-	clone.skipCaller.Store(l.skipCaller.Load())
-
-	return clone
 }
 
 // Clone returns a deep copy of the logger as a unilog.Logger.

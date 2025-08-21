@@ -18,7 +18,7 @@ type slogOptions struct {
 	format     string
 	withCaller bool
 	withTrace  bool
-	skipCaller int
+	callerSkip int
 }
 
 // ValidFormats is the list of supported output formats.
@@ -61,9 +61,9 @@ func WithFormat(format string) SlogOption {
 func WithCaller(enabled bool, skip ...int) SlogOption {
 	return func(o *slogOptions) error {
 		o.withCaller = enabled
-		o.skipCaller = 0
+		o.callerSkip = 0
 		if enabled && len(skip) > 0 && skip[0] > 0 {
-			o.skipCaller = skip[0]
+			o.callerSkip = skip[0]
 		}
 		return nil
 	}

@@ -17,7 +17,7 @@ type logOptions struct {
 	separator  string
 	withCaller bool
 	withTrace  bool
-	skipCaller int
+	callerSkip int
 }
 
 // WithLevel sets the minimum log level.
@@ -54,9 +54,9 @@ func WithSeparator(separator string) LogOption {
 func WithCaller(enabled bool, skip ...int) LogOption {
 	return func(o *logOptions) error {
 		o.withCaller = enabled
-		o.skipCaller = 0
+		o.callerSkip = 0
 		if enabled && len(skip) > 0 && skip[0] > 0 {
-			o.skipCaller = skip[0]
+			o.callerSkip = skip[0]
 		}
 		return nil
 	}

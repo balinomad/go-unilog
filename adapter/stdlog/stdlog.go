@@ -31,10 +31,10 @@ type stdLogger struct {
 	fields     *unilog.KeyValueMap
 	withCaller bool
 	withTrace  bool
-	skipCaller atomic.Int32
+	callerSkip int // Number of stack frames to skip, including internalSkipFrames
 }
 
-// Ensure slogLogger implements the following interfaces.
+// Ensure stdLogger implements the following interfaces.
 var (
 	_ unilog.Logger        = (*stdLogger)(nil)
 	_ unilog.Configurator  = (*stdLogger)(nil)
@@ -67,9 +67,9 @@ func New(opts ...LogOption) (unilog.Logger, error) {
 		fields:     unilog.NewKeyValueMap(o.separator, " ", fieldStringer),
 		withCaller: o.withCaller,
 		withTrace:  o.withTrace,
+		callerSkip: o.callerSkip,
 	}
 	l.lvl.Store(int32(o.level))
-	l.skipCaller.Store(int32(o.skipCaller + internalSkipFrames))
 
 	return l, nil
 }
@@ -84,8 +84,7 @@ func (l *stdLogger) log(level unilog.LogLevel, msg string, keyValues ...any) {
 	fields := l.fields.WithPairs(keyValues...)
 
 	if l.withCaller {
-		skip := int(l.skipCaller.Load())
-		fields.Set("source", caller.New(skip).Location())
+		fields.Set("source", caller.New(l.callerSkip).Location())
 	}
 
 	if l.withTrace && level >= unilog.LevelError {
@@ -161,11 +160,10 @@ func (l *stdLogger) SetOutput(w io.Writer) error {
 
 // CallerSkip returns the current number of stack frames being skipped.
 func (l *stdLogger) CallerSkip() int {
-	return int(l.skipCaller.Load() - internalSkipFrames)
+	return l.callerSkip - internalSkipFrames
 }
 
 // WithCallerSkip returns a new Logger instance with the caller skip value updated.
-// The original logger is not modified.
 func (l *stdLogger) WithCallerSkip(skip int) (unilog.Logger, error) {
 	if skip < 0 {
 		return l, unilog.ErrInvalidSourceSkip
@@ -175,13 +173,12 @@ func (l *stdLogger) WithCallerSkip(skip int) (unilog.Logger, error) {
 	}
 
 	clone := l.clone()
-	clone.skipCaller.Store(int32(skip + internalSkipFrames))
+	clone.callerSkip = skip + internalSkipFrames
 
 	return clone, nil
 }
 
 // WithCallerSkipDelta returns a new Logger instance with the caller skip value altered by the given delta.
-// The original logger is not modified.
 func (l *stdLogger) WithCallerSkipDelta(delta int) (unilog.Logger, error) {
 	if delta == 0 {
 		return l, nil
@@ -196,9 +193,9 @@ func (l *stdLogger) clone() *stdLogger {
 		out:        l.out,
 		withTrace:  l.withTrace,
 		withCaller: l.withCaller,
+		callerSkip: l.callerSkip,
 	}
 	clone.lvl.Store(l.lvl.Load())
-	clone.skipCaller.Store(l.skipCaller.Load())
 
 	return clone
 }
