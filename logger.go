@@ -5,26 +5,27 @@ import (
 	"io"
 )
 
-// Logger is the generic logging interface. It's designed to be a common
-// abstraction over various logging libraries, enabling structured and
-// level-based logging.
+// Logger is the core logging interface.
+// It unifies structured and leveled logging across multiple backends.
+// Context is always passed but may be ignored by implementations
+// that do not support context-aware logging.
 type Logger interface {
-	// Log is the core logging method. All other level-specific methods (Debug, Info, etc.)
-	// are convenience wrappers around this method.
+	// Log is the generic logging entry point.
+	// All level-specific methods (Debug, Info, etc.) delegate to this.
 	Log(ctx context.Context, level LogLevel, msg string, keyValues ...any)
 
-	// Enabled returns true if the logger is configured for the given level.
+	// Enabled reports whether logging at the given level is currently enabled.
 	Enabled(level LogLevel) bool
 
-	// With adds structured context to the logger. It returns a new logger
-	// instance that will include the given key-value pairs in all subsequent
-	// log messages. The underlying implementation should handle this immutably.
+	// With returns a new Logger that always includes the given key-value pairs.
+	// Implementations should treat this immutably (original logger unchanged).
 	With(keyValues ...any) Logger
-	// WithGroup returns a Logger that starts a group, if name is non-empty.
-	// The keys of all attributes added to the Logger will be qualified by the given name.
+
+	// WithGroup returns a new Logger that starts a key-value group.
+	// If name is non-empty, keys of attributes will be qualified with it.
 	WithGroup(name string) Logger
 
-	// Convenience methods for logging at specific levels.
+	// Convenience level-specific methods (all call Log under the hood).
 	Debug(ctx context.Context, msg string, keyValues ...any)
 	Info(ctx context.Context, msg string, keyValues ...any)
 	Warn(ctx context.Context, msg string, keyValues ...any)
@@ -33,33 +34,34 @@ type Logger interface {
 	Fatal(ctx context.Context, msg string, keyValues ...any)
 }
 
-// Configurator is an interface for loggers that support dynamic configuration.
+// Configurator provides dynamic reconfiguration for loggers that support it.
 type Configurator interface {
-	// SetLevel dynamically changes the minimum level of logs.
+	// SetLevel sets the minimum enabled log level.
 	SetLevel(level LogLevel) error
-	// SetOutput changes the destination for log output.
+
+	// SetOutput changes the log output destination.
 	SetOutput(w io.Writer) error
 }
 
-// CallerSkipper is an interface for loggers that support dynamic caller skipping.
+// CallerSkipper is implemented by loggers that support adjusting caller reporting.
 type CallerSkipper interface {
-	// CallerSkip returns the current number of stack frames being skipped.
+	// CallerSkip returns the current number of stack frames skipped.
 	CallerSkip() int
-	// WithCallerSkip returns a new Logger instance with the caller skip value updated.
-	// The original logger is not modified.
+
+	// WithCallerSkip returns a new Logger with the caller skip set.
 	WithCallerSkip(skip int) (Logger, error)
-	// WithCallerSkipDelta returns a new Logger instance with the caller skip value altered by the given delta.
-	// The original logger is not modified.
+
+	// WithCallerSkipDelta returns a new Logger with caller skip adjusted by delta.
 	WithCallerSkipDelta(delta int) (Logger, error)
 }
 
-// Cloner is an interface for loggers that support cloning.
+// Cloner is implemented by loggers that can be deeply copied.
 type Cloner interface {
 	// Clone returns a deep copy of the logger.
 	Clone() Logger
 }
 
-// Syncer is an interface for loggers that support flushing.
+// Syncer is implemented by loggers that support flushing buffered log entries.
 type Syncer interface {
 	// Sync flushes any buffered log entries.
 	Sync() error
