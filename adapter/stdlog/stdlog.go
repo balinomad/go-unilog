@@ -12,6 +12,7 @@ import (
 
 	"github.com/balinomad/go-atomicwriter"
 	"github.com/balinomad/go-caller"
+	"github.com/balinomad/go-ctxmap"
 	"github.com/balinomad/go-unilog"
 )
 
@@ -29,7 +30,7 @@ type stdLogger struct {
 	l          *log.Logger
 	out        *atomicwriter.AtomicWriter
 	lvl        atomic.Int32
-	fields     *unilog.KeyValueMap
+	fields     *ctxmap.CtxMap
 	withCaller bool
 	withTrace  bool
 	callerSkip int // Number of stack frames to skip, including internalSkipFrames
@@ -65,7 +66,7 @@ func New(opts ...LogOption) (unilog.Logger, error) {
 	l := &stdLogger{
 		l:          log.New(aw, "", log.LstdFlags),
 		out:        aw,
-		fields:     unilog.NewKeyValueMap(o.separator, " ", fieldStringer),
+		fields:     ctxmap.NewCtxMap(o.separator, " ", fieldStringer),
 		withCaller: o.withCaller,
 		withTrace:  o.withTrace,
 		callerSkip: o.callerSkip,
