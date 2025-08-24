@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/balinomad/go-atomicwriter"
 	"github.com/balinomad/go-caller"
 	"github.com/balinomad/go-unilog"
 )
@@ -26,7 +27,7 @@ var fieldStringer = func(k string, v any) string { return k + "=" + fmt.Sprint(v
 // stdLogger is a unilog.Logger implementation for Go's standard library log package.
 type stdLogger struct {
 	l          *log.Logger
-	out        *unilog.AtomicWriter
+	out        *atomicwriter.AtomicWriter
 	lvl        atomic.Int32
 	fields     *unilog.KeyValueMap
 	withCaller bool
@@ -56,7 +57,7 @@ func New(opts ...LogOption) (unilog.Logger, error) {
 		}
 	}
 
-	aw, err := unilog.NewAtomicWriter(o.output)
+	aw, err := atomicwriter.NewAtomicWriter(o.output)
 	if err != nil {
 		return nil, unilog.ErrAtomicWriterFail(err)
 	}

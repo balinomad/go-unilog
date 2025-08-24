@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime/debug"
 
+	"github.com/balinomad/go-atomicwriter"
 	"github.com/balinomad/go-caller"
 	"github.com/balinomad/go-unilog"
 )
@@ -17,7 +18,7 @@ const internalSkipFrames = 3
 // slogLogger is a wrapper around Go's standard slog.Logger.
 type slogLogger struct {
 	l          *slog.Logger
-	out        *unilog.AtomicWriter
+	out        *atomicwriter.AtomicWriter
 	lvl        *slog.LevelVar
 	withTrace  bool
 	withCaller bool
@@ -48,7 +49,7 @@ func New(opts ...SlogOption) (unilog.Logger, error) {
 	levelVar := new(slog.LevelVar)
 	levelVar.Set(toSlogLevel(o.level))
 
-	aw, err := unilog.NewAtomicWriter(o.output)
+	aw, err := atomicwriter.NewAtomicWriter(o.output)
 	if err != nil {
 		return nil, unilog.ErrAtomicWriterFail(err)
 	}

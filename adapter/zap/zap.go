@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/balinomad/go-atomicwriter"
 	"github.com/balinomad/go-unilog"
 )
 
@@ -19,7 +20,7 @@ const internalSkipFrames = 2
 type zapLogger struct {
 	l          *zap.Logger
 	lvl        zap.AtomicLevel
-	out        *unilog.AtomicWriter
+	out        *atomicwriter.AtomicWriter
 	keyPrefix  string
 	separator  string
 	callerSkip int // Number of stack frames to skip, including internalSkipFrames
@@ -49,7 +50,7 @@ func New(opts ...ZapOption) (unilog.Logger, error) {
 		}
 	}
 
-	aw, err := unilog.NewAtomicWriter(o.output)
+	aw, err := atomicwriter.NewAtomicWriter(o.output)
 	if err != nil {
 		return nil, unilog.ErrAtomicWriterFail(err)
 	}

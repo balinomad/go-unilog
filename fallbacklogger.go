@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+
+	"github.com/balinomad/go-atomicwriter"
 )
 
 // fallbackLogger provides a minimal, panic-safe Logger implementation.
@@ -16,7 +18,7 @@ import (
 //
 // Not meant for production use.
 type fallbackLogger struct {
-	w   *AtomicWriter
+	w   *atomicwriter.AtomicWriter
 	l   *log.Logger
 	lvl atomic.Int32
 }
@@ -29,7 +31,7 @@ var (
 
 // newFallbackLogger creates a new fallbackLogger with the given output writer.
 func newFallbackLogger(w io.Writer, level LogLevel) (*fallbackLogger, error) {
-	aw, err := NewAtomicWriter(w)
+	aw, err := atomicwriter.NewAtomicWriter(w)
 	if err != nil {
 		return nil, err
 	}

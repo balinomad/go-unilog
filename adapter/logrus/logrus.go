@@ -9,6 +9,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"github.com/balinomad/go-atomicwriter"
 	"github.com/balinomad/go-caller"
 	"github.com/balinomad/go-unilog"
 )
@@ -19,7 +20,7 @@ const internalSkipFrames = 3
 // logrusLogger is a wrapper around Logrus's logger.
 type logrusLogger struct {
 	entry      *logrus.Entry
-	out        *unilog.AtomicWriter
+	out        *atomicwriter.AtomicWriter
 	fields     logrus.Fields
 	keyPrefix  string
 	separator  string
@@ -51,7 +52,7 @@ func New(opts ...LogrusOption) (unilog.Logger, error) {
 		}
 	}
 
-	aw, err := unilog.NewAtomicWriter(o.output)
+	aw, err := atomicwriter.NewAtomicWriter(o.output)
 	if err != nil {
 		return nil, unilog.ErrAtomicWriterFail(err)
 	}
