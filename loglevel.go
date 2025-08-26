@@ -1,6 +1,9 @@
 package unilog
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // LogLevel represents log severity levels.
 type LogLevel int32
@@ -33,6 +36,27 @@ func (l LogLevel) String() string {
 	default:
 		return fmt.Sprintf("UNKNOWN (%d)", l)
 	}
+}
+
+// ParseLevel converts a string to a LogLevel.
+// It is case-insensitive. If the string is not a valid level,
+// it returns LevelInfo and an error.
+func ParseLevel(levelStr string) (LogLevel, error) {
+	switch strings.ToUpper(levelStr) {
+	case "DEBUG":
+		return LevelDebug, nil
+	case "INFO":
+		return LevelInfo, nil
+	case "WARN":
+		return LevelWarn, nil
+	case "ERROR":
+		return LevelError, nil
+	case "CRITICAL":
+		return LevelCritical, nil
+	case "FATAL":
+		return LevelFatal, nil
+	}
+	return LevelInfo, fmt.Errorf("unknown log level: %q", levelStr)
 }
 
 // ErrInvalidLogLevel is returned when a LogLevel is out of range.

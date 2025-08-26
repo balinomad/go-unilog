@@ -1,3 +1,6 @@
+// Package unilog provides a unified logging interface for structured and leveled
+// logging. The API is designed to be easy to use and to work with a variety of
+// loggers, such as log15, logrus, zerolog, zap and Go Kit's log and slog packages.
 package unilog
 
 import (

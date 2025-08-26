@@ -32,6 +32,36 @@ func TestLogLevel_String(t *testing.T) {
 	}
 }
 
+func TestParseLevel(t *testing.T) {
+	tests := []struct {
+		name      string
+		levelStr  string
+		wantLevel LogLevel
+		wantErr   bool
+	}{
+		{"Valid DEBUG", "DEBUG", LevelDebug, false},
+		{"Valid info (lowercase)", "info", LevelInfo, false},
+		{"Valid WaRn (mixed case)", "WaRn", LevelWarn, false},
+		{"Valid ERROR", "ERROR", LevelError, false},
+		{"Valid CRITICAL", "CRITICAL", LevelCritical, false},
+		{"Valid FATAL", "FATAL", LevelFatal, false},
+		{"Invalid level", "INVALID", LevelInfo, true},
+		{"Empty string", "", LevelInfo, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotLevel, err := ParseLevel(tt.levelStr)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseLevel() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if gotLevel != tt.wantLevel {
+				t.Errorf("ParseLevel() gotLevel = %v, want %v", gotLevel, tt.wantLevel)
+			}
+		})
+	}
+}
+
 func TestErrInvalidLogLevel(t *testing.T) {
 	tests := []struct {
 		name       string
