@@ -19,9 +19,6 @@ import (
 // DefaultKeySeparator is the default separator for group key prefixes.
 const DefaultKeySeparator = "_"
 
-// internalSkipFrames is the number of frames to skip within this adapter.
-const internalSkipFrames = 2
-
 // fieldStringer returns a string representation of a key-value pair.
 var fieldStringer = func(k string, v any) string { return k + "=" + fmt.Sprint(v) }
 
@@ -33,7 +30,7 @@ type stdLogger struct {
 	fields     *ctxmap.CtxMap
 	withCaller bool
 	withTrace  bool
-	callerSkip int // Number of stack frames to skip, including internalSkipFrames
+	callerSkip int
 }
 
 // Ensure stdLogger implements the following interfaces.
@@ -47,7 +44,7 @@ var (
 // New creates a new unilog.Logger instance backed by the standard log.
 func New(opts ...LogOption) (unilog.Logger, error) {
 	o := &logOptions{
-		level:     unilog.LevelInfo,
+		level:     unilog.InfoLevel,
 		output:    os.Stderr,
 		separator: DefaultKeySeparator,
 	}
@@ -78,7 +75,7 @@ func New(opts ...LogOption) (unilog.Logger, error) {
 
 // log is the internal logging function used by the unilog.Logger interface. It adds caller and
 // stack trace information before passing the record to the underlying slog logger.
-func (l *stdLogger) log(level unilog.LogLevel, msg string, keyValues ...any) {
+func (l *stdLogger) log(level unilog.LogLevel, msg string, skip int, keyValues ...any) {
 	if !l.Enabled(level) {
 		return
 	}
@@ -86,10 +83,13 @@ func (l *stdLogger) log(level unilog.LogLevel, msg string, keyValues ...any) {
 	fields := l.fields.WithPairs(keyValues...)
 
 	if l.withCaller {
-		fields.Set("source", caller.New(l.callerSkip).Location())
+		// Add 2 to skip this function and the caller function
+		if s := l.callerSkip + skip + 2; s > 0 {
+			fields.Set("source", caller.New(s).Location())
+		}
 	}
 
-	if l.withTrace && level >= unilog.LevelError {
+	if l.withTrace && level >= unilog.ErrorLevel {
 		fields.Set("stack", string(debug.Stack()))
 	}
 
@@ -105,14 +105,23 @@ func (l *stdLogger) log(level unilog.LogLevel, msg string, keyValues ...any) {
 
 	l.l.Println(sb.String())
 
-	if level == unilog.LevelFatal {
+	// Handle termination levels
+	switch level {
+	case unilog.FatalLevel:
 		os.Exit(1)
+	case unilog.PanicLevel:
+		panic(msg)
 	}
 }
 
 // Log implements the unilog.Logger interface for the standard logger.
 func (l *stdLogger) Log(_ context.Context, level unilog.LogLevel, msg string, keyValues ...any) {
-	l.log(level, msg, keyValues...)
+	l.log(level, msg, 0, keyValues...)
+}
+
+// LogWithSkip implements the unilog.CallerSkipper interface for the standard logger.
+func (l *stdLogger) LogWithSkip(_ context.Context, level unilog.LogLevel, msg string, skip int, keyValues ...any) {
+	l.log(level, msg, skip, keyValues...)
 }
 
 // Enabled checks if the given log level is enabled.
@@ -162,7 +171,7 @@ func (l *stdLogger) SetOutput(w io.Writer) error {
 
 // CallerSkip returns the current number of stack frames being skipped.
 func (l *stdLogger) CallerSkip() int {
-	return l.callerSkip - internalSkipFrames
+	return l.callerSkip
 }
 
 // WithCallerSkip returns a new Logger instance with the caller skip value updated.
@@ -170,12 +179,13 @@ func (l *stdLogger) WithCallerSkip(skip int) (unilog.Logger, error) {
 	if skip < 0 {
 		return l, unilog.ErrInvalidSourceSkip
 	}
-	if skip == l.CallerSkip() {
+
+	if skip == l.callerSkip {
 		return l, nil
 	}
 
 	clone := l.clone()
-	clone.callerSkip = skip + internalSkipFrames
+	clone.callerSkip = skip
 
 	return clone, nil
 }
@@ -185,7 +195,8 @@ func (l *stdLogger) WithCallerSkipDelta(delta int) (unilog.Logger, error) {
 	if delta == 0 {
 		return l, nil
 	}
-	return l.WithCallerSkip(l.CallerSkip() + delta)
+
+	return l.WithCallerSkip(l.callerSkip + delta)
 }
 
 // clone returns a deep copy of the logger.
@@ -207,32 +218,42 @@ func (l *stdLogger) Clone() unilog.Logger {
 	return l.clone()
 }
 
+// Trace logs a message at the trace level.
+func (l *stdLogger) Trace(_ context.Context, msg string, keyValues ...any) {
+	l.log(unilog.TraceLevel, msg, 0, keyValues...)
+}
+
 // Debug logs a message at the debug level.
 func (l *stdLogger) Debug(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.LevelDebug, msg, keyValues...)
+	l.log(unilog.DebugLevel, msg, 0, keyValues...)
 }
 
 // Info logs a message at the info level.
 func (l *stdLogger) Info(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.LevelInfo, msg, keyValues...)
+	l.log(unilog.InfoLevel, msg, 0, keyValues...)
 }
 
 // Warn logs a message at the warn level.
 func (l *stdLogger) Warn(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.LevelWarn, msg, keyValues...)
+	l.log(unilog.WarnLevel, msg, 0, keyValues...)
 }
 
 // Error logs a message at the error level.
 func (l *stdLogger) Error(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.LevelError, msg, keyValues...)
+	l.log(unilog.ErrorLevel, msg, 0, keyValues...)
 }
 
 // Critical logs a message at the critical level.
 func (l *stdLogger) Critical(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.LevelCritical, msg, keyValues...)
+	l.log(unilog.CriticalLevel, msg, 0, keyValues...)
 }
 
 // Fatal logs a message at the fatal level and exits the process.
 func (l *stdLogger) Fatal(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.LevelFatal, msg, keyValues...)
+	l.log(unilog.FatalLevel, msg, 0, keyValues...)
+}
+
+// Panic logs a message at the panic level and panics.
+func (l *stdLogger) Panic(_ context.Context, msg string, keyValues ...any) {
+	l.log(unilog.PanicLevel, msg, 0, keyValues...)
 }

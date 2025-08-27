@@ -14,14 +14,10 @@ import (
 	"github.com/balinomad/go-unilog"
 )
 
-// internalSkipFrames is the fixed number of frames inside this adapter that must always be skipped.
-const internalSkipFrames = 3
-
 // logrusLogger is a wrapper around Logrus's logger.
 type logrusLogger struct {
 	entry      *logrus.Entry
 	out        *atomicwriter.AtomicWriter
-	fields     logrus.Fields
 	keyPrefix  string
 	separator  string
 	withTrace  bool
@@ -40,7 +36,7 @@ var (
 // New creates a new unilog.Logger instance backed by logrus.
 func New(opts ...LogrusOption) (unilog.Logger, error) {
 	o := &logrusOptions{
-		level:     unilog.LevelInfo,
+		level:     unilog.InfoLevel,
 		output:    os.Stderr,
 		format:    "json",
 		separator: "_",
@@ -80,7 +76,7 @@ func New(opts ...LogrusOption) (unilog.Logger, error) {
 	return logger, nil
 }
 
-func (l *logrusLogger) log(ctx context.Context, level unilog.LogLevel, msg string, keyValues ...any) {
+func (l *logrusLogger) log(ctx context.Context, level unilog.LogLevel, msg string, skip int, keyValues ...any) {
 	if !l.Enabled(level) {
 		return
 	}
@@ -88,10 +84,12 @@ func (l *logrusLogger) log(ctx context.Context, level unilog.LogLevel, msg strin
 	fields := l.processKeyValues(keyValues...)
 
 	if l.withCaller {
-		fields["source"] = caller.New(l.callerSkip).Location()
+		if s := l.callerSkip + skip + 2; s > 0 {
+			fields["source"] = caller.New(s).Location()
+		}
 	}
 
-	if l.withTrace && level >= unilog.LevelError {
+	if l.withTrace && level >= unilog.ErrorLevel {
 		fields["stack"] = string(debug.Stack())
 	}
 
@@ -101,11 +99,24 @@ func (l *logrusLogger) log(ctx context.Context, level unilog.LogLevel, msg strin
 	}
 
 	entry.Log(toLogrusLevel(level), msg)
+
+	// Handle termination levels
+	switch level {
+	case unilog.FatalLevel:
+		os.Exit(1)
+	case unilog.PanicLevel:
+		panic(msg)
+	}
 }
 
 // Log implements the unilog.Logger interface for logrus.
 func (l *logrusLogger) Log(ctx context.Context, level unilog.LogLevel, msg string, keyValues ...any) {
-	l.log(ctx, level, msg, keyValues...)
+	l.log(ctx, level, msg, 0, keyValues...)
+}
+
+// LogWithSkip implements the unilog.CallerSkipper interface for logrus.
+func (l *logrusLogger) LogWithSkip(ctx context.Context, level unilog.LogLevel, msg string, skip int, keyValues ...any) {
+	l.log(ctx, level, msg, skip, keyValues...)
 }
 
 // With returns a new logger with the provided keyValues added to the context.
@@ -158,7 +169,7 @@ func (l *logrusLogger) SetOutput(w io.Writer) error {
 
 // CallerSkip returns the current number of stack frames being skipped.
 func (l *logrusLogger) CallerSkip() int {
-	return l.callerSkip - internalSkipFrames
+	return l.callerSkip
 }
 
 // WithCallerSkip returns a new Logger instance with the caller skip value updated.
@@ -168,7 +179,7 @@ func (l *logrusLogger) WithCallerSkip(skip int) (unilog.Logger, error) {
 	}
 
 	clone := l.clone()
-	clone.callerSkip = skip + internalSkipFrames
+	clone.callerSkip = skip
 
 	return clone, nil
 }
@@ -217,50 +228,66 @@ func (l *logrusLogger) Clone() unilog.Logger {
 	return l.clone()
 }
 
+// Trace logs a message at the trace level.
+func (l *logrusLogger) Trace(ctx context.Context, msg string, keyValues ...any) {
+	l.log(ctx, unilog.TraceLevel, msg, 0, keyValues...)
+}
+
 // Debug logs a message at the debug level.
 func (l *logrusLogger) Debug(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, unilog.LevelDebug, msg, keyValues...)
+	l.log(ctx, unilog.DebugLevel, msg, 0, keyValues...)
 }
 
 // Info logs a message at the info level.
 func (l *logrusLogger) Info(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, unilog.LevelInfo, msg, keyValues...)
+	l.log(ctx, unilog.InfoLevel, msg, 0, keyValues...)
 }
 
 // Warn logs a message at the warn level.
 func (l *logrusLogger) Warn(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, unilog.LevelWarn, msg, keyValues...)
+	l.log(ctx, unilog.WarnLevel, msg, 0, keyValues...)
 }
 
 // Error logs a message at the error level.
 func (l *logrusLogger) Error(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, unilog.LevelError, msg, keyValues...)
+	l.log(ctx, unilog.ErrorLevel, msg, 0, keyValues...)
 }
 
 // Critical logs a message at the critical level.
 func (l *logrusLogger) Critical(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, unilog.LevelCritical, msg, keyValues...)
+	l.log(ctx, unilog.CriticalLevel, msg, 0, keyValues...)
 }
 
 // Fatal logs a message at the fatal level and exits the process.
 func (l *logrusLogger) Fatal(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, unilog.LevelFatal, msg, keyValues...)
+	l.log(ctx, unilog.FatalLevel, msg, 0, keyValues...)
+}
+
+// Panic logs a message at the panic level and panics.
+func (l *logrusLogger) Panic(ctx context.Context, msg string, keyValues ...any) {
+	l.log(ctx, unilog.PanicLevel, msg, 0, keyValues...)
 }
 
 func toLogrusLevel(level unilog.LogLevel) logrus.Level {
+	level = min(max(level, unilog.MinLevel), unilog.MaxLevel)
+
 	switch level {
-	case unilog.LevelDebug:
+	case unilog.TraceLevel:
+		return logrus.TraceLevel
+	case unilog.DebugLevel:
 		return logrus.DebugLevel
-	case unilog.LevelInfo:
+	case unilog.InfoLevel:
 		return logrus.InfoLevel
-	case unilog.LevelWarn:
+	case unilog.WarnLevel:
 		return logrus.WarnLevel
-	case unilog.LevelError:
+	case unilog.ErrorLevel:
 		return logrus.ErrorLevel
-	case unilog.LevelCritical:
+	case unilog.CriticalLevel:
 		return logrus.ErrorLevel
-	case unilog.LevelFatal:
+	case unilog.FatalLevel:
 		return logrus.FatalLevel
+	case unilog.PanicLevel:
+		return logrus.PanicLevel
 	default:
 		return logrus.InfoLevel
 	}
