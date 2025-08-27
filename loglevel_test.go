@@ -12,16 +12,18 @@ func TestLogLevel_String(t *testing.T) {
 		l    LogLevel
 		want string
 	}{
-		{"Debug level", LevelDebug, "DEBUG"},
-		{"Info level", LevelInfo, "INFO"},
-		{"Warn level", LevelWarn, "WARN"},
-		{"Error level", LevelError, "ERROR"},
-		{"Critical level", LevelCritical, "CRITICAL"},
-		{"Fatal level", LevelFatal, "FATAL"},
-		{"Below minimum level", LevelDebug - 1, "UNKNOWN (-1)"},
-		{"Above maximum level", LevelFatal + 1, fmt.Sprintf("UNKNOWN (%d)", LevelFatal+1)},
-		{"Far above maximum", 100, "UNKNOWN (100)"},
-		{"Far below minimum", -100, "UNKNOWN (-100)"},
+		{"Trace level", TraceLevel, "TRACE"},
+		{"Debug level", DebugLevel, "DEBUG"},
+		{"Info level", InfoLevel, "INFO"},
+		{"Warn level", WarnLevel, "WARN"},
+		{"Error level", ErrorLevel, "ERROR"},
+		{"Critical level", CriticalLevel, "CRITICAL"},
+		{"Fatal level", FatalLevel, "FATAL"},
+		{"Panic level", PanicLevel, "PANIC"},
+		{"Below minimum level", MinLevel - 1, fmt.Sprintf("UNKNOWN (%d)", MinLevel-1)},
+		{"Above maximum level", MaxLevel + 1, fmt.Sprintf("UNKNOWN (%d)", MaxLevel+1)},
+		{"Far below minimum", MinLevel - 100, fmt.Sprintf("UNKNOWN (%d)", MinLevel-100)},
+		{"Far above maximum", MaxLevel + 100, fmt.Sprintf("UNKNOWN (%d)", MaxLevel+100)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -39,14 +41,16 @@ func TestParseLevel(t *testing.T) {
 		wantLevel LogLevel
 		wantErr   bool
 	}{
-		{"Valid DEBUG", "DEBUG", LevelDebug, false},
-		{"Valid info (lowercase)", "info", LevelInfo, false},
-		{"Valid WaRn (mixed case)", "WaRn", LevelWarn, false},
-		{"Valid ERROR", "ERROR", LevelError, false},
-		{"Valid CRITICAL", "CRITICAL", LevelCritical, false},
-		{"Valid FATAL", "FATAL", LevelFatal, false},
-		{"Invalid level", "INVALID", LevelInfo, true},
-		{"Empty string", "", LevelInfo, true},
+		{"Valid TRACE", "TRACE", TraceLevel, false},
+		{"Valid DEBUG", "DEBUG", DebugLevel, false},
+		{"Valid info (lowercase)", "info", InfoLevel, false},
+		{"Valid WaRn (mixed case)", "WaRn", WarnLevel, false},
+		{"Valid ERROR", "ERROR", ErrorLevel, false},
+		{"Valid CRITICAL", "CRITICAL", CriticalLevel, false},
+		{"Valid FATAL", "FATAL", FatalLevel, false},
+		{"Valid PANIC", "PANIC", PanicLevel, false},
+		{"Invalid level", "INVALID", InfoLevel, true},
+		{"Empty string", "", InfoLevel, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -68,10 +72,10 @@ func TestErrInvalidLogLevel(t *testing.T) {
 		level      LogLevel
 		wantSubstr string
 	}{
-		{"Below minimum", LevelDebug - 1, "invalid log level -1"},
-		{"Above maximum", LevelFatal + 1, fmt.Sprintf("invalid log level %d", LevelFatal+1)},
-		{"Far above", 1234, "invalid log level 1234"},
-		{"Far below", -999, "invalid log level -999"},
+		{"Below minimum", MinLevel - 1, fmt.Sprintf("invalid log level %d", MinLevel-1)},
+		{"Above maximum", MaxLevel + 1, fmt.Sprintf("invalid log level %d", MaxLevel+1)},
+		{"Far below", MinLevel - 1000, fmt.Sprintf("invalid log level %d", MinLevel-1000)},
+		{"Far above", MaxLevel + 1000, fmt.Sprintf("invalid log level %d", MaxLevel+1000)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -93,16 +97,18 @@ func TestIsValidLogLevel(t *testing.T) {
 		level LogLevel
 		want  bool
 	}{
-		{"Valid Debug", LevelDebug, true},
-		{"Valid Info", LevelInfo, true},
-		{"Valid Warn", LevelWarn, true},
-		{"Valid Error", LevelError, true},
-		{"Valid Critical", LevelCritical, true},
-		{"Valid Fatal", LevelFatal, true},
-		{"Below minimum", LevelDebug - 1, false},
-		{"Above maximum", LevelFatal + 1, false},
-		{"Far below minimum", -123, false},
-		{"Far above maximum", 999, false},
+		{"Valid Trace", TraceLevel, true},
+		{"Valid Debug", DebugLevel, true},
+		{"Valid Info", InfoLevel, true},
+		{"Valid Warn", WarnLevel, true},
+		{"Valid Error", ErrorLevel, true},
+		{"Valid Critical", CriticalLevel, true},
+		{"Valid Fatal", FatalLevel, true},
+		{"Valid Panic", PanicLevel, true},
+		{"Below minimum", MinLevel - 1, false},
+		{"Above maximum", MaxLevel + 1, false},
+		{"Far below minimum", MinLevel - 999, false},
+		{"Far above maximum", MaxLevel + 999, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -119,13 +125,18 @@ func TestValidateLogLevel(t *testing.T) {
 		level   LogLevel
 		wantErr bool
 	}{
-		{"Valid Debug", LevelDebug, false},
-		{"Valid Fatal", LevelFatal, false},
-		{"Valid middle (Warn)", LevelWarn, false},
-		{"Below minimum", LevelDebug - 1, true},
-		{"Above maximum", LevelFatal + 1, true},
-		{"Far above", 500, true},
-		{"Far below", -500, true},
+		{"Valid Trace", TraceLevel, false},
+		{"Valid Debug", DebugLevel, false},
+		{"Valid Info", InfoLevel, false},
+		{"Valid Warn", WarnLevel, false},
+		{"Valid Error", ErrorLevel, false},
+		{"Valid Critical", CriticalLevel, false},
+		{"Valid Fatal", FatalLevel, false},
+		{"Valid Panic", PanicLevel, false},
+		{"Below minimum", MinLevel - 1, true},
+		{"Above maximum", MaxLevel + 1, true},
+		{"Far below minimum", MinLevel - 999, true},
+		{"Far above maximum", MaxLevel + 999, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

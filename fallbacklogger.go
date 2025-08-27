@@ -64,8 +64,12 @@ func (l *fallbackLogger) Log(_ context.Context, level LogLevel, msg string, keyV
 
 	l.l.Println(sb.String())
 
-	if level == LevelFatal {
+	// Handle termination levels
+	switch level {
+	case FatalLevel:
 		os.Exit(1)
+	case PanicLevel:
+		panic(msg)
 	}
 }
 
@@ -97,32 +101,42 @@ func (l *fallbackLogger) SetOutput(w io.Writer) error {
 	return l.w.Swap(w)
 }
 
+// Trace logs a message at the trace level.
+func (l *fallbackLogger) Trace(ctx context.Context, msg string, keyValues ...any) {
+	l.Log(ctx, TraceLevel, msg, keyValues...)
+}
+
 // Debug logs a message at the debug level.
 func (l *fallbackLogger) Debug(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, LevelDebug, msg, keyValues...)
+	l.Log(ctx, DebugLevel, msg, keyValues...)
 }
 
 // Info logs a message at the info level.
 func (l *fallbackLogger) Info(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, LevelInfo, msg, keyValues...)
+	l.Log(ctx, InfoLevel, msg, keyValues...)
 }
 
 // Warn logs a message at the warn level.
 func (l *fallbackLogger) Warn(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, LevelWarn, msg, keyValues...)
+	l.Log(ctx, WarnLevel, msg, keyValues...)
 }
 
 // Error logs a message at the error level.
 func (l *fallbackLogger) Error(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, LevelError, msg, keyValues...)
+	l.Log(ctx, ErrorLevel, msg, keyValues...)
 }
 
 // Critical logs a message at the critical level.
 func (l *fallbackLogger) Critical(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, LevelCritical, msg, keyValues...)
+	l.Log(ctx, CriticalLevel, msg, keyValues...)
 }
 
 // Fatal logs a message at the fatal level and exits the process.
 func (l *fallbackLogger) Fatal(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, LevelFatal, msg, keyValues...)
+	l.Log(ctx, FatalLevel, msg, keyValues...)
+}
+
+// Panic logs a message at the fatal level and panics.
+func (l *fallbackLogger) Panic(ctx context.Context, msg string, keyValues ...any) {
+	l.Log(ctx, PanicLevel, msg, keyValues...)
 }

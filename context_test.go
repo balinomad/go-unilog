@@ -20,7 +20,7 @@ func TestContext(t *testing.T) {
 
 	t.Run("WithLogger and LoggerFromContext success", func(t *testing.T) {
 		ctx := context.Background()
-		expectedLogger, _ := newFallbackLogger(io.Discard, LevelInfo)
+		expectedLogger, _ := newFallbackLogger(io.Discard, InfoLevel)
 		ctxWithLogger := WithLogger(ctx, expectedLogger)
 
 		if ctxWithLogger == ctx {

@@ -10,29 +10,39 @@ type LogLevel int32
 
 // Log levels are ordered from least to most severe.
 const (
-	LevelDebug LogLevel = iota
-	LevelInfo
-	LevelWarn
-	LevelError
-	LevelCritical
-	LevelFatal
+	TraceLevel LogLevel = iota - 1
+	DebugLevel
+	InfoLevel
+	WarnLevel
+	ErrorLevel
+	CriticalLevel
+	FatalLevel
+	PanicLevel
+
+	MaxLevel     LogLevel = PanicLevel
+	MinLevel     LogLevel = TraceLevel
+	DefaultLevel LogLevel = InfoLevel
 )
 
 // String returns a human-readable representation of the log level.
 func (l LogLevel) String() string {
 	switch l {
-	case LevelDebug:
+	case TraceLevel:
+		return "TRACE"
+	case DebugLevel:
 		return "DEBUG"
-	case LevelInfo:
+	case InfoLevel:
 		return "INFO"
-	case LevelWarn:
+	case WarnLevel:
 		return "WARN"
-	case LevelError:
+	case ErrorLevel:
 		return "ERROR"
-	case LevelCritical:
+	case CriticalLevel:
 		return "CRITICAL"
-	case LevelFatal:
+	case FatalLevel:
 		return "FATAL"
+	case PanicLevel:
+		return "PANIC"
 	default:
 		return fmt.Sprintf("UNKNOWN (%d)", l)
 	}
@@ -40,33 +50,37 @@ func (l LogLevel) String() string {
 
 // ParseLevel converts a string to a LogLevel.
 // It is case-insensitive. If the string is not a valid level,
-// it returns LevelInfo and an error.
+// it returns InfoLevel and an error.
 func ParseLevel(levelStr string) (LogLevel, error) {
 	switch strings.ToUpper(levelStr) {
+	case "TRACE":
+		return TraceLevel, nil
 	case "DEBUG":
-		return LevelDebug, nil
+		return DebugLevel, nil
 	case "INFO":
-		return LevelInfo, nil
+		return InfoLevel, nil
 	case "WARN":
-		return LevelWarn, nil
+		return WarnLevel, nil
 	case "ERROR":
-		return LevelError, nil
+		return ErrorLevel, nil
 	case "CRITICAL":
-		return LevelCritical, nil
+		return CriticalLevel, nil
 	case "FATAL":
-		return LevelFatal, nil
+		return FatalLevel, nil
+	case "PANIC":
+		return PanicLevel, nil
 	}
-	return LevelInfo, fmt.Errorf("unknown log level: %q", levelStr)
+	return DefaultLevel, fmt.Errorf("unknown log level: %q", levelStr)
 }
 
 // ErrInvalidLogLevel is returned when a LogLevel is out of range.
 func ErrInvalidLogLevel(level LogLevel) error {
-	return fmt.Errorf("invalid log level %d, must be between %d and %d", level, LevelDebug, LevelFatal)
+	return fmt.Errorf("invalid log level %d, must be between %d and %d", level, MinLevel, MaxLevel)
 }
 
 // IsValidLogLevel returns true if the given log level is valid.
 func IsValidLogLevel(level LogLevel) bool {
-	return level >= LevelDebug && level <= LevelFatal
+	return level >= MinLevel && level <= MaxLevel
 }
 
 // ValidateLogLevel returns an error if the given log level is invalid.

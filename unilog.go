@@ -8,17 +8,24 @@ import (
 	"io"
 )
 
-// Logger is the core logging interface.
+// CoreLogger is the core logging interface used internally by log adapters.
 // It unifies structured and leveled logging across multiple backends.
 // Context is always passed but may be ignored by implementations
 // that do not support context-aware logging.
-type Logger interface {
+type CoreLogger interface {
 	// Log is the generic logging entry point.
 	// All level-specific methods (Debug, Info, etc.) delegate to this.
+	// Logging on Fatal and Panic levels will exit the process.
 	Log(ctx context.Context, level LogLevel, msg string, keyValues ...any)
 
 	// Enabled reports whether logging at the given level is currently enabled.
 	Enabled(level LogLevel) bool
+}
+
+// Logger is the main logging interface.
+// It provides convenience methods for logging at specific levels and with groups.
+type Logger interface {
+	CoreLogger
 
 	// With returns a new Logger that always includes the given key-value pairs.
 	// Implementations should treat this immutably (original logger unchanged).
@@ -29,12 +36,14 @@ type Logger interface {
 	WithGroup(name string) Logger
 
 	// Convenience level-specific methods (all call Log under the hood).
-	Debug(ctx context.Context, msg string, keyValues ...any)
-	Info(ctx context.Context, msg string, keyValues ...any)
-	Warn(ctx context.Context, msg string, keyValues ...any)
-	Error(ctx context.Context, msg string, keyValues ...any)
-	Critical(ctx context.Context, msg string, keyValues ...any)
-	Fatal(ctx context.Context, msg string, keyValues ...any)
+	Trace(ctx context.Context, msg string, keyValues ...any)    // Logs at the trace level
+	Debug(ctx context.Context, msg string, keyValues ...any)    // Logs at the debug level
+	Info(ctx context.Context, msg string, keyValues ...any)     // Logs at the info level
+	Warn(ctx context.Context, msg string, keyValues ...any)     // Logs at the warn level
+	Error(ctx context.Context, msg string, keyValues ...any)    // Logs at the error level
+	Critical(ctx context.Context, msg string, keyValues ...any) // Logs at the critical level
+	Fatal(ctx context.Context, msg string, keyValues ...any)    // Logs at the fatal level and exits the process
+	Panic(ctx context.Context, msg string, keyValues ...any)    // Logs at the panic level and panics
 }
 
 // Configurator provides dynamic reconfiguration for loggers that support it.
@@ -48,6 +57,9 @@ type Configurator interface {
 
 // CallerSkipper is implemented by loggers that support adjusting caller reporting.
 type CallerSkipper interface {
+	// LogWithSkip logs a message at the given level, skipping the given number of stack frames.
+	LogWithSkip(ctx context.Context, level LogLevel, msg string, skip int, keyValues ...any)
+
 	// CallerSkip returns the current number of stack frames skipped.
 	CallerSkip() int
 

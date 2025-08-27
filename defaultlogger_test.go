@@ -8,6 +8,7 @@ import (
 )
 
 // mockLogger is a simple mock implementation of the Logger interface for testing.
+// Fatal and Panic are implemented without exiting the process.
 type mockLogger struct {
 	mu      sync.Mutex
 	buf     *bytes.Buffer
@@ -36,23 +37,31 @@ func (m *mockLogger) WithGroup(name string) Logger {
 	return m
 }
 
+func (m *mockLogger) Trace(ctx context.Context, msg string, keyValues ...any) {
+	m.Log(ctx, TraceLevel, msg, keyValues...)
+}
+
 func (m *mockLogger) Debug(ctx context.Context, msg string, keyValues ...any) {
-	m.Log(ctx, LevelDebug, msg, keyValues...)
+	m.Log(ctx, DebugLevel, msg, keyValues...)
 }
 func (m *mockLogger) Info(ctx context.Context, msg string, keyValues ...any) {
-	m.Log(ctx, LevelInfo, msg, keyValues...)
+	m.Log(ctx, InfoLevel, msg, keyValues...)
 }
 func (m *mockLogger) Warn(ctx context.Context, msg string, keyValues ...any) {
-	m.Log(ctx, LevelWarn, msg, keyValues...)
+	m.Log(ctx, WarnLevel, msg, keyValues...)
 }
 func (m *mockLogger) Error(ctx context.Context, msg string, keyValues ...any) {
-	m.Log(ctx, LevelError, msg, keyValues...)
+	m.Log(ctx, ErrorLevel, msg, keyValues...)
 }
 func (m *mockLogger) Critical(ctx context.Context, msg string, keyValues ...any) {
-	m.Log(ctx, LevelCritical, msg, keyValues...)
+	m.Log(ctx, CriticalLevel, msg, keyValues...)
 }
 func (m *mockLogger) Fatal(ctx context.Context, msg string, keyValues ...any) {
-	m.Log(ctx, LevelFatal, msg, keyValues...)
+	m.Log(ctx, FatalLevel, msg, keyValues...)
+}
+
+func (m *mockLogger) Panic(ctx context.Context, msg string, keyValues ...any) {
+	m.Log(ctx, FatalLevel, msg, keyValues...)
 }
 
 func (m *mockLogger) String() string {
@@ -118,12 +127,14 @@ func TestGlobalLogFunctions(t *testing.T) {
 		level   LogLevel
 		msg     string
 	}{
-		{"Debug", Debug, LevelDebug, "debug message"},
-		{"Info", Info, LevelInfo, "info message"},
-		{"Warn", Warn, LevelWarn, "warn message"},
-		{"Error", Error, LevelError, "error message"},
-		{"Critical", Critical, LevelCritical, "critical message"},
-		{"Fatal", Fatal, LevelFatal, "fatal message"},
+		{"Trace", Trace, TraceLevel, "trace message"},
+		{"Debug", Debug, DebugLevel, "debug message"},
+		{"Info", Info, InfoLevel, "info message"},
+		{"Warn", Warn, WarnLevel, "warn message"},
+		{"Error", Error, ErrorLevel, "error message"},
+		{"Critical", Critical, CriticalLevel, "critical message"},
+		{"Fatal", Fatal, FatalLevel, "fatal message"},
+		{"Panic", Panic, PanicLevel, "panic message"},
 	}
 
 	for _, tt := range tests {
