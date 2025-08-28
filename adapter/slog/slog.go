@@ -82,24 +82,26 @@ func (l *slogLogger) log(ctx context.Context, level unilog.LogLevel, msg string,
 		return
 	}
 
-	args := make([]any, 0, len(keyValues)+4)
-	args = append(args, keyValues...)
-	if len(args)%2 == 1 {
-		args = args[:len(args)-1]
+	// Pre-allocate assuming 2 extra fields for source and stack
+	fields := make([]any, 0, len(keyValues)+4)
+	fields = append(fields, keyValues...)
+
+	if len(fields)%2 == 1 {
+		fields = fields[:len(fields)-1]
 	}
 
 	if l.withCaller {
 		// Add 2 to skip this function and the caller function
 		if s := l.callerSkip + skip + 2; s > 0 {
-			args = append(args, slog.SourceKey, caller.New(s).Location())
+			fields = append(fields, slog.SourceKey, caller.New(s).Location())
 		}
 	}
 
 	if l.withTrace && level >= unilog.ErrorLevel {
-		args = append(args, "stack", string(debug.Stack()))
+		fields = append(fields, "stack", string(debug.Stack()))
 	}
 
-	l.l.Log(ctx, toSlogLevel(level), msg, args...)
+	l.l.Log(ctx, toSlogLevel(level), msg, fields...)
 
 	// Handle termination levels
 	switch level {
