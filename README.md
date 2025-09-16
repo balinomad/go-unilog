@@ -1,10 +1,16 @@
+[![GoDoc](https://pkg.go.dev/badge/github.com/balinomad/go-unilog?status.svg)](https://pkg.go.dev/github.com/balinomad/go-unilog?tab=doc)
+[![GoMod](https://img.shields.io/github/go-mod/go-version/balinomad/go-unilog)](https://github.com/balinomad/go-unilog)
+[![Size](https://img.shields.io/github/languages/code-size/balinomad/go-unilog)](https://github.com/balinomad/go-unilog)
+[![License](https://img.shields.io/github/license/balinomad/go-unilog)](./LICENSE)
 [![Go](https://github.com/balinomad/go-unilog/actions/workflows/go.yml/badge.svg)](https://github.com/balinomad/go-unilog/actions/workflows/go.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/balinomad/go-unilog)](https://goreportcard.com/report/github.com/balinomad/go-unilog)
+[![codecov](https://codecov.io/github/balinomad/go-unilog/graph/badge.svg?token=L1K68IIN51)](https://codecov.io/github/balinomad/go-unilog)
 
-# go-unilog
+# unilog
 
 *A lightweight and idiomatic Go library to offer a unified logger interface.*
 
-## 🤔 Why go-unilog?
+## 🤔 Why unilog?
 
 In a large Go application or a reusable library, coupling directly to a specific logging library creates vendor lock-in. If you decide to switch from `zerolog` to `slog`, you would have to refactor every logging call site in your project.
 
@@ -26,6 +32,12 @@ Perfect for use in:
   - **Minimal Core Dependencies**: The core `unilog` API has zero third-party dependencies, making it safe to use in libraries. The default fallback logger has one small internal dependency for thread-safe writes.
   - **Panic-Safe**: Includes a fallback logger that ensures `unilog.Info()` and other package-level functions never panic, even if no logger is configured.
 
+## 📌 Installation
+
+```bash
+go get github.com/balinomad/go-unilog@latest
+```
+
 ## 🚀 Basic Usage
 
 Placeholder for an example with the built-in `slog` adapter.
@@ -42,14 +54,26 @@ import (
 )
 
 func main() {
+	ctx := context.Background()
+	logger := slog.New(WithOutput(os.Stderr), WithFormat(slog.FormatJSON), WithCaller(true))
+
+	unilog.SetDefault(logger)
+
+	err := doSomething(ctx)
+	if err != nil {
+		unilog.Error(ctx, "failed to do something", unilog.Error(err))
+		return
+	}
+
+	unilog.Info(ctx, "did something")
 }
-```
 
-
-## 📌 Installation
-
-```bash
-go get github.com/balinomad/go-atomicwriter@latest
+func doSomething(ctx context.Context) error {
+	unilog.Debug(ctx, "trying to do something")
+	// simulate some work
+	time.Sleep(100 * time.Millisecond)
+	return nil
+}
 ```
 
 ## 📘 API Reference
@@ -129,7 +153,9 @@ Levels: `TraceLevel`, `DebugLevel`, `InfoLevel`, `WarnLevel`, `ErrorLevel`, `Cri
 | `unilog.IsValidLogLevel(level)` | Returns true if the given log level is valid. |
 | `unilog.ValidateLogLevel(level)` | Returns an error if the given log level is invalid. |
 
-## 🔧 Advanced Example: Implementing a Custom Adapter
+## 🔧 Advanced Example
+
+### Implementing a Custom Adapter
 
 The true power of `go-unilog` is its ability to adapt to any logging library, including your own custom or in-house solutions. To do this, you simply need to create a new adapter that satisfies the `unilog.Logger` interface.
 
@@ -295,6 +321,18 @@ func main() {
 // [WARN] API limit approaching remaining=5
 // [INFO] Processing request request_id=abc-123
 // [ERROR] Failed to fetch data request_id=abc-123 url=/api/data
+```
+
+## 🧪 Testing
+
+Run tests with:
+```bash
+go test -v ./...
+```
+
+Run benchmarks with:
+```bash
+go test -bench=. -benchmem ./...
 ```
 
 ## ⚖️ License

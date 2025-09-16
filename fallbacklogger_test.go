@@ -149,7 +149,7 @@ func TestFallbackLogger_LevelMethods(t *testing.T) {
 		{"Warn", logger.Warn, "WARN"},
 		{"Error", logger.Error, "ERROR"},
 		{"Critical", logger.Critical, "CRITICAL"},
-		// We test Fatal and Panic separately becasue they exit the process
+		// We test Fatal and Panic separately because they exit the process
 	}
 
 	for _, tt := range tests {
