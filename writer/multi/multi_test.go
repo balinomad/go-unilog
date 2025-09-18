@@ -15,6 +15,7 @@ type mockWriteCloser struct {
 	closeCalls int
 }
 
+// Write implements the io.Writer interface.
 func (m *mockWriteCloser) Write(p []byte) (n int, err error) {
 	if m.writeErr != nil {
 		return 0, m.writeErr
@@ -22,15 +23,20 @@ func (m *mockWriteCloser) Write(p []byte) (n int, err error) {
 	return m.buffer.Write(p)
 }
 
+// Close implements the io.Closer interface.
 func (m *mockWriteCloser) Close() error {
 	m.closeCalls++
 	return m.closeErr
 }
 
+// String returns the contents of the buffer.
 func (m *mockWriteCloser) String() string {
 	return m.buffer.String()
 }
 
+// TestNew tests the New function.
+// It verifies that New creates a MultiWriter with the provided writers, and
+// that it creates a MultiWriter with no writers when given none.
 func TestNew(t *testing.T) {
 	t.Run("creates with writers", func(t *testing.T) {
 		w1 := &bytes.Buffer{}
@@ -50,6 +56,9 @@ func TestNew(t *testing.T) {
 	})
 }
 
+// TestMultiWriter_Write tests the Write method of MultiWriter.
+// It verifies that Write writes the correct number of bytes to all underlying writers,
+// and that the content of all writers matches the written content.
 func TestMultiWriter_Write(t *testing.T) {
 	w1 := &bytes.Buffer{}
 	w2 := &mockWriteCloser{}
@@ -72,6 +81,9 @@ func TestMultiWriter_Write(t *testing.T) {
 	}
 }
 
+// TestMultiWriter_WriteError tests the error handling of MultiWriter.Write.
+// It verifies that Write returns an error if one of the underlying writers returns an error,
+// and that the content of all writers up to the error matches the written content.
 func TestMultiWriter_WriteError(t *testing.T) {
 	w1 := &bytes.Buffer{}
 	expectedErr := errors.New("write failed")
@@ -94,6 +106,10 @@ func TestMultiWriter_WriteError(t *testing.T) {
 	}
 }
 
+// TestMultiWriter_Close tests the Close method of MultiWriter.
+// It verifies that Close calls the Close method on all underlying writers
+// that implement the io.Closer interface, even if one of them returns an error.
+// It also verifies that Close returns the first error encountered, if any.
 func TestMultiWriter_Close(t *testing.T) {
 	t.Run("closes underlying closers", func(t *testing.T) {
 		w1 := &mockWriteCloser{}
@@ -133,6 +149,9 @@ func TestMultiWriter_Close(t *testing.T) {
 	})
 }
 
+// TestMultiWriter_AddWriters tests the AddWriters method of MultiWriter.
+// It verifies that AddWriters adds a writer to the MultiWriter, and that
+// subsequent writes to the MultiWriter are written to the added writer.
 func TestMultiWriter_AddWriters(t *testing.T) {
 	mw := New()
 	w1 := &bytes.Buffer{}
@@ -153,6 +172,9 @@ func TestMultiWriter_AddWriters(t *testing.T) {
 	}
 }
 
+// TestMultiWriter_Concurrency tests the concurrency safety of MultiWriter.
+// It verifies that MultiWriter can be safely written to concurrently from multiple goroutines.
+// It also verifies that the content of all writers is correct after the concurrent writes.
 func TestMultiWriter_Concurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	w1 := &bytes.Buffer{}
