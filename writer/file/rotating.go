@@ -127,17 +127,24 @@ func (w *RotatingWriter) openExistingOrNew() error {
 // rotate performs the log file rotation.
 // This function must be called with the lock held.
 func (w *RotatingWriter) rotate() error {
-	//  Close the current file
+	// Close the current file
 	if err := w.close(); err != nil {
 		return err
 	}
 
-	// Rename the current log file to a backup name
-	backupFilename := w.filename + ".1"
-	if err := os.Rename(w.filename, backupFilename); err != nil {
-		// If rename fails, try to reopen the original file to avoid losing logs
-		_ = w.openExistingOrNew()
-		return fmt.Errorf("failed to rename log file: %w", err)
+	// If maxBackups is 0, just remove the current file and create a new one
+	if w.maxBackups == 0 {
+		if err := os.Remove(w.filename); err != nil && !os.IsNotExist(err) {
+			// If we can't remove the file, try to reopen it to maintain functionality
+			if reopenErr := w.openExistingOrNew(); reopenErr != nil {
+				// Both remove and reopen failed: this is a serious error
+				return fmt.Errorf("failed to remove log file: %w, and failed to reopen: %v", err, reopenErr)
+			}
+			// Remove failed but reopen succeeded: writer is functional but rotation didn't work as expected
+			return fmt.Errorf("failed to remove log file for rotation: %w", err)
+		}
+		// Remove succeeded (or file didn't exist), now create new file
+		return w.openExistingOrNew()
 	}
 
 	// Rotate existing backups in reverse order to avoid overwriting files
@@ -152,6 +159,14 @@ func (w *RotatingWriter) rotate() error {
 				fmt.Fprintf(os.Stderr, "failed to rotate backup file %s: %v\n", oldPath, err)
 			}
 		}
+	}
+
+	// Rename the current log file to a backup name
+	backupFilename := w.filename + ".1"
+	if err := os.Rename(w.filename, backupFilename); err != nil {
+		// If rename fails, try to reopen the original file to avoid losing logs
+		_ = w.openExistingOrNew()
+		return fmt.Errorf("failed to rename log file: %w", err)
 	}
 
 	// Remove backups that exceed the maxBackups limit
