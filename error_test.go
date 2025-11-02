@@ -1,17 +1,19 @@
-package unilog
+package unilog_test
 
 import (
 	"errors"
 	"testing"
+
+	"github.com/balinomad/go-unilog"
 )
 
 func TestErrorTypes(t *testing.T) {
 	t.Run("Static Errors", func(t *testing.T) {
-		if ErrNilWriter.Error() != "writer cannot be nil" {
-			t.Errorf("ErrNilWriter has wrong message: %q", ErrNilWriter.Error())
+		if unilog.ErrNilWriter.Error() != "writer cannot be nil" {
+			t.Errorf("ErrNilWriter has wrong message: %q", unilog.ErrNilWriter.Error())
 		}
-		if ErrInvalidSourceSkip.Error() != "source skip must be non-negative" {
-			t.Errorf("ErrInvalidSourceSkip has wrong message: %q", ErrInvalidSourceSkip.Error())
+		if unilog.ErrInvalidSourceSkip.Error() != "source skip must be non-negative" {
+			t.Errorf("ErrInvalidSourceSkip has wrong message: %q", unilog.ErrInvalidSourceSkip.Error())
 		}
 	})
 
@@ -26,13 +28,13 @@ func TestErrorTypes(t *testing.T) {
 		}{
 			{
 				name:               "ErrAtomicWriterFail",
-				errFunc:            func(_ error) error { return ErrAtomicWriterFail(baseErr) },
+				errFunc:            func(_ error) error { return unilog.ErrAtomicWriterFail(baseErr) },
 				expectedMsg:        "failed to create atomic writer: base error",
 				expectedWrappedErr: baseErr,
 			},
 			{
 				name:               "ErrFailedOption",
-				errFunc:            func(_ error) error { return ErrFailedOption(baseErr) },
+				errFunc:            func(_ error) error { return unilog.ErrFailedOption(baseErr) },
 				expectedMsg:        "failed to apply option: base error",
 				expectedWrappedErr: baseErr,
 			},
@@ -52,7 +54,7 @@ func TestErrorTypes(t *testing.T) {
 	})
 
 	t.Run("ErrInvalidFormat", func(t *testing.T) {
-		err := ErrInvalidFormat("xml", "json", "text")
+		err := unilog.ErrInvalidFormat("xml", "json", "text")
 		expected := `invalid format: "xml", must be one of [json text]`
 		if err.Error() != expected {
 			t.Errorf("ErrInvalidFormat() = %q, want %q", err.Error(), expected)
