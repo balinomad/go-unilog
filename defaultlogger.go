@@ -6,30 +6,36 @@ import (
 	"sync"
 )
 
-var (
-	defaultLogger Logger
-	once          sync.Once
-)
+// global is the global default logger instance.
+// It is initialized on first use.
+var global = struct {
+	mu     sync.Mutex
+	logger Logger
+}{}
 
 // SetDefault sets the global default logger instance.
 func SetDefault(l Logger) {
-	defaultLogger = l
+	global.mu.Lock()
+	global.logger = l
+	global.mu.Unlock()
 }
 
 // Default returns the global default logger instance. If no logger has been set,
 // it initializes a fallback standard logger (stdlog) to ensure that logging
 // calls do not cause a panic.
 func Default() Logger {
-	once.Do(func() {
-		if defaultLogger == nil {
-			l, err := newFallbackLogger(os.Stderr, InfoLevel)
-			if err != nil {
-				panic(err)
-			}
-			defaultLogger = l
+	global.mu.Lock()
+	defer global.mu.Unlock()
+
+	if global.logger == nil {
+		l, err := newFallbackLogger(os.Stderr, InfoLevel)
+		if err != nil {
+			panic(err)
 		}
-	})
-	return defaultLogger
+		global.logger = l
+	}
+
+	return global.logger
 }
 
 // logWithDefault logs a message at the given level using the global default logger.
