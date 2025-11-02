@@ -6,6 +6,7 @@ require (
 	github.com/balinomad/go-atomicwriter v1.0.0
 	github.com/balinomad/go-caller v1.0.0
 	github.com/balinomad/go-ctxmap v1.0.0
+	github.com/balinomad/go-mockfs/v2 v2.0.0-rc.1
 	github.com/inconshreveable/log15/v3 v3.1.0
 	github.com/rs/zerolog v1.34.0
 	github.com/sirupsen/logrus v1.9.3

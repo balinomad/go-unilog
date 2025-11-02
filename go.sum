@@ -4,6 +4,8 @@ github.com/balinomad/go-caller v1.0.0 h1:cuzQHupOmhfWIOWz+Mi9kSqPT70NLbe07lMNJ0h
 github.com/balinomad/go-caller v1.0.0/go.mod h1:v+ANiNL+PwvzmZsfBJxq7OtIBFborLxlOnEx1TzxCYM=
 github.com/balinomad/go-ctxmap v1.0.0 h1:PYiJlof48qT7SLSS7mz93mUebfK3wUmgzGxwDCYgkHU=
 github.com/balinomad/go-ctxmap v1.0.0/go.mod h1:VOCSAz3Tm/N+zPQb0HM2VoshHcmm5PoLoXEYOFLdGsE=
+github.com/balinomad/go-mockfs/v2 v2.0.0-rc.1 h1:AFMaQP07wMgJz2c1J8aFghVTaDNropyVeX5nKkgeFcg=
+github.com/balinomad/go-mockfs/v2 v2.0.0-rc.1/go.mod h1:ljv+zXOEXuj18Fr5rEmLwtpiP5sLIgF9l82aBakI1EU=
 github.com/coreos/go-systemd/v22 v22.5.0/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSVTIJ3seZv2GcEnc=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
