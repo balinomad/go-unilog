@@ -1,4 +1,4 @@
-package file
+package lumberjack
 
 import (
 	"gopkg.in/natefinch/lumberjack.v2"

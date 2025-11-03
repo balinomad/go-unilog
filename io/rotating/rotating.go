@@ -1,8 +1,9 @@
-package file
+package rotating
 
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,12 +17,15 @@ type RotatingWriter struct {
 	filename    string // The file to write to.
 	maxSize     int64  // Maximum size in bytes before rotation.
 	maxBackups  int    // Maximum number of old log files to retain.
-	file        *os.File
+	file        fs.File
 	currentSize int64
 }
 
-// Ensure RotatingWriter implements io.WriteCloser for complete file handling.
-var _ io.WriteCloser = (*RotatingWriter)(nil)
+// Ensure RotatingWriter implements io.Writer and io.WriteCloser for complete file handling.
+var (
+	_ io.Writer      = (*RotatingWriter)(nil)
+	_ io.WriteCloser = (*RotatingWriter)(nil)
+)
 
 // RotatingWriterConfig holds the configuration for a RotatingWriter.
 type RotatingWriterConfig struct {

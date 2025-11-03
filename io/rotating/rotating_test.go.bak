@@ -1,9 +1,8 @@
-package file
+package rotating
 
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,6 +66,15 @@ func TestNewRotatingWriter(t *testing.T) {
 			},
 			wantError: false,
 		},
+		{
+			name: "with subdirectory",
+			config: &RotatingWriterConfig{
+				Filename:   "logs/subdir/app.log",
+				MaxSize:    100,
+				MaxBackups: 10,
+			},
+			wantError: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -76,6 +84,10 @@ func TestNewRotatingWriter(t *testing.T) {
 			if !tt.wantError {
 				tempDir := t.TempDir()
 				filename = filepath.Join(tempDir, filepath.Base(tt.config.Filename))
+				// For subdirectory test, preserve the path structure
+				if strings.Contains(tt.config.Filename, "/") {
+					filename = filepath.Join(tempDir, tt.config.Filename)
+				}
 				tt.config.Filename = filename
 			}
 
@@ -121,39 +133,59 @@ func TestNewRotatingWriter(t *testing.T) {
 }
 
 func TestRotatingWriter_Write(t *testing.T) {
-	tempDir := t.TempDir()
-	filename := filepath.Join(tempDir, "write_test.log")
-
-	config := &RotatingWriterConfig{
-		Filename:   filename,
-		MaxSize:    1, // 1MB
-		MaxBackups: 2,
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{"empty write", []byte{}},
+		{"nil write", nil},
+		{"small write", []byte("Hello, World!\n")},
+		{"medium write", bytes.Repeat([]byte("medium"), 1000)},
 	}
 
-	w, err := NewRotatingWriter(config)
-	if err != nil {
-		t.Fatalf("Failed to create writer: %v", err)
-	}
-	defer w.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			filename := filepath.Join(tempDir, "write_test.log")
 
-	// Test basic write
-	testData := "Hello, World!\n"
-	n, err := w.Write([]byte(testData))
-	if err != nil {
-		t.Errorf("Write() error = %v", err)
-	}
-	if n != len(testData) {
-		t.Errorf("Write() wrote %d bytes, want %d", n, len(testData))
+			config := &RotatingWriterConfig{
+				Filename:   filename,
+				MaxSize:    10, // 10MB - large enough to avoid rotation
+				MaxBackups: 2,
+			}
+
+			w, err := NewRotatingWriter(config)
+			if err != nil {
+				t.Fatalf("Failed to create writer: %v", err)
+			}
+			defer w.Close()
+
+			n, err := w.Write(tt.data)
+			if err != nil {
+				t.Errorf("Write() error = %v", err)
+			}
+			if n != len(tt.data) {
+				t.Errorf("Write() wrote %d bytes, want %d", n, len(tt.data))
+			}
+
+			// Verify current size tracking
+			if w.currentSize != int64(len(tt.data)) {
+				t.Errorf("currentSize = %d, want %d", w.currentSize, len(tt.data))
+			}
+
+			// Verify file content (skip for empty/nil writes)
+			if len(tt.data) > 0 {
+				content, err := os.ReadFile(filename)
+				if err != nil {
+					t.Errorf("Failed to read file: %v", err)
+				}
+				if string(content) != string(tt.data) {
+					t.Errorf("File content = %q, want %q", string(content), string(tt.data))
+				}
+			}
+		})
 	}
 
-	// Verify file content
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		t.Errorf("Failed to read file: %v", err)
-	}
-	if string(content) != testData {
-		t.Errorf("File content = %q, want %q", string(content), testData)
-	}
 }
 
 func TestRotatingWriter_MultipleWrites(t *testing.T) {
@@ -202,6 +234,79 @@ func TestRotatingWriter_MultipleWrites(t *testing.T) {
 	// Verify current size tracking
 	if w.currentSize != int64(totalBytes) {
 		t.Errorf("currentSize = %d, want %d", w.currentSize, totalBytes)
+	}
+}
+
+func TestRotatingWriter_WriteToClosedWriter(t *testing.T) {
+	tempDir := t.TempDir()
+	filename := filepath.Join(tempDir, "closed_writer.log")
+
+	config := &RotatingWriterConfig{
+		Filename:   filename,
+		MaxSize:    1,
+		MaxBackups: 2,
+	}
+
+	w, err := NewRotatingWriter(config)
+	if err != nil {
+		t.Fatalf("Failed to create writer: %v", err)
+	}
+
+	// Close the writer
+	w.Close()
+
+	// Try to write after close
+	_, err = w.Write([]byte("test"))
+	if err == nil {
+		t.Error("Expected error when writing to closed writer")
+	}
+}
+
+func TestRotatingWriter_WriteToExistingFile(t *testing.T) {
+	tempDir := t.TempDir()
+	filename := filepath.Join(tempDir, "existing_test.log")
+
+	// Create an existing file with some content
+	existingContent := "Existing log entry\n"
+	err := os.WriteFile(filename, []byte(existingContent), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create existing file: %v", err)
+	}
+
+	config := &RotatingWriterConfig{
+		Filename:   filename,
+		MaxSize:    1, // 1MB
+		MaxBackups: 2,
+	}
+
+	w, err := NewRotatingWriter(config)
+	if err != nil {
+		t.Fatalf("Failed to create writer: %v", err)
+	}
+	defer w.Close()
+
+	// Verify current size is set correctly
+	expectedSize := int64(len(existingContent))
+	if w.currentSize != expectedSize {
+		t.Errorf("currentSize = %d, want %d", w.currentSize, expectedSize)
+	}
+
+	// Write new content
+	newContent := "New log entry\n"
+	_, err = w.Write([]byte(newContent))
+	if err != nil {
+		t.Errorf("Write() error = %v", err)
+	}
+
+	// Verify both contents are in the file
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		t.Errorf("Failed to read file: %v", err)
+	}
+
+	expectedTotal := existingContent + newContent
+	if string(content) != expectedTotal {
+		t.Errorf("File content = %q, want %q", string(content), expectedTotal)
 	}
 }
 
@@ -320,16 +425,48 @@ func TestRotatingWriter_MultipleRotations(t *testing.T) {
 	}
 }
 
-func TestRotatingWriter_ExistingFile(t *testing.T) {
+func TestRotatingWriter_RotateWithZeroMaxSize(t *testing.T) {
 	tempDir := t.TempDir()
-	filename := filepath.Join(tempDir, "existing_test.log")
+	filename := filepath.Join(tempDir, "zero_maxsize.log")
 
-	// Create an existing file with some content
-	existingContent := "Existing log entry\n"
-	err := os.WriteFile(filename, []byte(existingContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create existing file: %v", err)
+	config := &RotatingWriterConfig{
+		Filename:   filename,
+		MaxSize:    0, // No size limit
+		MaxBackups: 2,
 	}
+
+	w, err := NewRotatingWriter(config)
+	if err != nil {
+		t.Fatalf("Failed to create writer: %v", err)
+	}
+	defer w.Close()
+
+	// Write a large amount of data
+	largeData := strings.Repeat("X", 2*1024*1024) // 2MB
+	_, err = w.Write([]byte(largeData))
+	if err != nil {
+		t.Errorf("Write() error = %v", err)
+	}
+
+	// With MaxSize = 0, no rotation should occur
+	backupFile := filename + ".1"
+	if _, err := os.Stat(backupFile); err == nil {
+		t.Error("Backup file should not exist when MaxSize is 0")
+	}
+
+	// Verify all data is in the main file
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		t.Errorf("Failed to read file: %v", err)
+	}
+	if len(content) != len(largeData) {
+		t.Errorf("File size = %d, want %d", len(content), len(largeData))
+	}
+}
+
+func TestRotatingWriter_RotationFailureRecovery(t *testing.T) {
+	tempDir := t.TempDir()
+	filename := filepath.Join(tempDir, "rotation_recovery.log")
 
 	config := &RotatingWriterConfig{
 		Filename:   filename,
@@ -343,29 +480,314 @@ func TestRotatingWriter_ExistingFile(t *testing.T) {
 	}
 	defer w.Close()
 
-	// Verify current size is set correctly
-	expectedSize := int64(len(existingContent))
-	if w.currentSize != expectedSize {
-		t.Errorf("currentSize = %d, want %d", w.currentSize, expectedSize)
+	// Write initial data
+	initialData := "Initial data\n"
+	_, err = w.Write([]byte(initialData))
+	if err != nil {
+		t.Errorf("Initial write error = %v", err)
 	}
 
-	// Write new content
-	newContent := "New log entry\n"
-	_, err = w.Write([]byte(newContent))
+	// Create a situation where rotation might fail by creating a backup file
+	// that can't be overwritten (this is platform-specific behavior)
+	backupFile := filename + ".1"
+	err = os.WriteFile(backupFile, []byte("existing backup"), 0444) // Read-only
+	if err != nil {
+		t.Fatalf("Failed to create read-only backup file: %v", err)
+	}
+
+	// Try to trigger rotation with large data
+	largeData := strings.Repeat("Z", 1024*1024+100) // Over 1MB
+	n, err := w.Write([]byte(largeData))
+	if err != nil {
+		t.Errorf("Write() return error = %v", err)
+	}
+
+	// The write should succeed even if rotation fails
+	if n != len(largeData) {
+		t.Errorf("Write() returned %d bytes, want %d", n, len(largeData))
+	}
+
+	// Clean up the read-only file
+	os.Chmod(backupFile, 0644)
+	os.Remove(backupFile)
+}
+
+func TestRotatingWriter_RotationEdgeCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		maxSize    int
+		maxBackups int
+		testFunc   func(t *testing.T, w *RotatingWriter, filename string)
+	}{
+		{
+			name:       "zero max backups",
+			maxSize:    1,
+			maxBackups: 0,
+			testFunc: func(t *testing.T, w *RotatingWriter, filename string) {
+				// Write initial data
+				initialData := "Initial data\n"
+				_, err := w.Write([]byte(initialData))
+				if err != nil {
+					t.Errorf("Initial write error = %v", err)
+				}
+
+				// Write data to trigger rotation
+				largeData := strings.Repeat("Y", 1024*1024) // Exactly 1MB
+				_, err = w.Write([]byte(largeData))
+				if err != nil {
+					t.Errorf("Write() error = %v", err)
+				}
+
+				// With MaxBackups = 0, no backup files should be created
+				backupFile := filename + ".1"
+				if _, err := os.Stat(backupFile); err == nil {
+					t.Error("Backup file should not exist when MaxBackups is 0")
+				}
+
+				// The current file should only contain the new data
+				content, err := os.ReadFile(filename)
+				if err != nil {
+					t.Errorf("Failed to read file: %v", err)
+				}
+
+				if string(content) != largeData {
+					t.Errorf("File should only contain new data after rotation with MaxBackups=0")
+				}
+			},
+		},
+		{
+			name:       "exact max size boundary",
+			maxSize:    1,
+			maxBackups: 2,
+			testFunc: func(t *testing.T, w *RotatingWriter, filename string) {
+				// Write exactly maxSize bytes
+				exactData := strings.Repeat("E", 1024*1024) // Exactly 1MB
+				n, err := w.Write([]byte(exactData))
+				if err != nil {
+					t.Errorf("Write() error = %v", err)
+				}
+				if n != len(exactData) {
+					t.Errorf("Write() returned %d bytes, want %d", n, len(exactData))
+				}
+
+				// No rotation should have occurred yet
+				backupFile := filename + ".1"
+				if _, err := os.Stat(backupFile); err == nil {
+					t.Error("Backup file should not exist when writing exactly maxSize")
+				}
+
+				// Write one more byte to trigger rotation
+				_, err = w.Write([]byte("X"))
+				if err != nil {
+					t.Errorf("Second write error = %v", err)
+				}
+
+				// Now rotation should have occurred
+				if _, err := os.Stat(backupFile); os.IsNotExist(err) {
+					t.Error("Backup file should exist after exceeding maxSize")
+				}
+
+				// Current file should only contain the new byte
+				content, err := os.ReadFile(filename)
+				if err != nil {
+					t.Errorf("Failed to read current file: %v", err)
+				}
+				if string(content) != "X" {
+					t.Errorf("Current file content = %q, want %q", string(content), "X")
+				}
+
+				// Backup file should contain the exact data
+				backupContent, err := os.ReadFile(backupFile)
+				if err != nil {
+					t.Errorf("Failed to read backup file: %v", err)
+				}
+				if string(backupContent) != exactData {
+					t.Errorf("Backup file should contain the original exact data")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			filename := filepath.Join(tempDir, fmt.Sprintf("%s.log", tt.name))
+
+			config := &RotatingWriterConfig{
+				Filename:   filename,
+				MaxSize:    tt.maxSize,
+				MaxBackups: tt.maxBackups,
+			}
+
+			w, err := NewRotatingWriter(config)
+			if err != nil {
+				t.Fatalf("Failed to create writer: %v", err)
+			}
+			defer w.Close()
+
+			tt.testFunc(t, w, filename)
+		})
+	}
+}
+
+func TestRotatingWriter_Close(t *testing.T) {
+	tempDir := t.TempDir()
+	filename := filepath.Join(tempDir, "close_test.log")
+
+	config := &RotatingWriterConfig{
+		Filename:   filename,
+		MaxSize:    1,
+		MaxBackups: 2,
+	}
+
+	w, err := NewRotatingWriter(config)
+	if err != nil {
+		t.Fatalf("Failed to create writer: %v", err)
+	}
+
+	// Write some data
+	testData := "Test data before close\n"
+	_, err = w.Write([]byte(testData))
 	if err != nil {
 		t.Errorf("Write() error = %v", err)
 	}
 
-	// Verify both contents are in the file
+	t.Run("basic close", func(t *testing.T) {
+		// Close the writer
+		err = w.Close()
+		if err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+
+	t.Run("write after close", func(t *testing.T) {
+		// Try to write after close (should fail or handle gracefully)
+		_, err = w.Write([]byte("After close"))
+		if err == nil {
+			t.Error("Expected error when writing to closed writer")
+		}
+	})
+
+	t.Run("close again", func(t *testing.T) {
+		// Close the writer again (should not error)
+		err = w.Close()
+		if err != nil {
+			t.Errorf("Second Close() error = %v", err)
+		}
+	})
+
+	t.Run("close with nil file", func(t *testing.T) {
+		wNilFile := &RotatingWriter{
+			filename: "test.log",
+			file:     nil, // Simulate already closed
+		}
+
+		err := wNilFile.Close()
+		if err != nil {
+			t.Errorf("Close with nil file should not error: %v", err)
+		}
+	})
+}
+
+func TestRotatingWriter_ZeroMaxBackups(t *testing.T) {
+	tempDir := t.TempDir()
+	filename := filepath.Join(tempDir, "zero_backups.log")
+
+	config := &RotatingWriterConfig{
+		Filename:   filename,
+		MaxSize:    1, // 1MB to trigger rotation
+		MaxBackups: 0, // No backups
+	}
+
+	w, err := NewRotatingWriter(config)
+	if err != nil {
+		t.Fatalf("Failed to create writer: %v", err)
+	}
+	defer w.Close()
+
+	// Write initial data to create the file
+	initialData := "Initial data\n"
+	_, err = w.Write([]byte(initialData))
+	if err != nil {
+		t.Errorf("Initial write error = %v", err)
+	}
+
+	// Write data to trigger rotation
+	largeData := strings.Repeat("Y", 1024*1024) // Exactly 1MB, plus initial data will exceed
+	_, err = w.Write([]byte(largeData))
+	if err != nil {
+		t.Errorf("Write() error = %v", err)
+	}
+
+	// With MaxBackups = 0, no backup files should be created
+	backupFile := filename + ".1"
+	if _, err := os.Stat(backupFile); err == nil {
+		t.Error("Backup file should not exist when MaxBackups is 0")
+	}
+
+	// The current file should only contain the new data since rotation removes old data
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		t.Errorf("Failed to read file: %v", err)
 	}
 
-	expectedTotal := existingContent + newContent
-	if string(content) != expectedTotal {
-		t.Errorf("File content = %q, want %q", string(content), expectedTotal)
+	// Should only contain the large data since old file was removed during rotation
+	if string(content) != largeData {
+		t.Errorf("File should only contain new data after rotation with MaxBackups=0")
 	}
+}
+
+func TestRotatingWriter_ErrorHandling(t *testing.T) {
+	t.Run("invalid directory permissions", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("Running as root, cannot test permission denied")
+		}
+
+		// Create a directory with no write permissions
+		tempDir := t.TempDir()
+		restrictedDir := filepath.Join(tempDir, "restricted")
+		err := os.Mkdir(restrictedDir, 0444) // Read-only
+		if err != nil {
+			t.Fatalf("Failed to create restricted directory: %v", err)
+		}
+
+		filename := filepath.Join(restrictedDir, "subdir", "test.log")
+		config := &RotatingWriterConfig{
+			Filename:   filename,
+			MaxSize:    1,
+			MaxBackups: 2,
+		}
+
+		_, err = NewRotatingWriter(config)
+		if err == nil {
+			t.Error("Expected error when creating writer in restricted directory")
+		}
+	})
+
+	t.Run("write to closed file", func(t *testing.T) {
+		tempDir := t.TempDir()
+		filename := filepath.Join(tempDir, "closed_test.log")
+
+		config := &RotatingWriterConfig{
+			Filename:   filename,
+			MaxSize:    1,
+			MaxBackups: 2,
+		}
+
+		w, err := NewRotatingWriter(config)
+		if err != nil {
+			t.Fatalf("Failed to create writer: %v", err)
+		}
+
+		// Close the writer
+		w.Close()
+
+		// Try to write to closed writer
+		_, err = w.Write([]byte("test"))
+		if err == nil {
+			t.Error("Expected error when writing to closed writer")
+		}
+	})
 }
 
 func TestRotatingWriter_DirectoryCreation(t *testing.T) {
@@ -469,308 +891,6 @@ func TestRotatingWriter_ConcurrentWrites(t *testing.T) {
 	}
 }
 
-func TestRotatingWriter_Close(t *testing.T) {
-	tempDir := t.TempDir()
-	filename := filepath.Join(tempDir, "close_test.log")
-
-	config := &RotatingWriterConfig{
-		Filename:   filename,
-		MaxSize:    1,
-		MaxBackups: 2,
-	}
-
-	w, err := NewRotatingWriter(config)
-	if err != nil {
-		t.Fatalf("Failed to create writer: %v", err)
-	}
-
-	// Write some data
-	testData := "Test data before close\n"
-	_, err = w.Write([]byte(testData))
-	if err != nil {
-		t.Errorf("Write() error = %v", err)
-	}
-
-	// Close the writer
-	err = w.Close()
-	if err != nil {
-		t.Errorf("Close() error = %v", err)
-	}
-
-	// Try to write after close (should fail or handle gracefully)
-	_, err = w.Write([]byte("After close"))
-	if err == nil {
-		t.Error("Expected error when writing to closed writer")
-	}
-
-	// Multiple closes should not error
-	err = w.Close()
-	if err != nil {
-		t.Errorf("Second Close() error = %v", err)
-	}
-}
-
-func TestRotatingWriter_ZeroMaxSize(t *testing.T) {
-	tempDir := t.TempDir()
-	filename := filepath.Join(tempDir, "zero_maxsize.log")
-
-	config := &RotatingWriterConfig{
-		Filename:   filename,
-		MaxSize:    0, // No size limit
-		MaxBackups: 2,
-	}
-
-	w, err := NewRotatingWriter(config)
-	if err != nil {
-		t.Fatalf("Failed to create writer: %v", err)
-	}
-	defer w.Close()
-
-	// Write a large amount of data
-	largeData := strings.Repeat("X", 2*1024*1024) // 2MB
-	_, err = w.Write([]byte(largeData))
-	if err != nil {
-		t.Errorf("Write() error = %v", err)
-	}
-
-	// With MaxSize = 0, no rotation should occur
-	backupFile := filename + ".1"
-	if _, err := os.Stat(backupFile); err == nil {
-		t.Error("Backup file should not exist when MaxSize is 0")
-	}
-
-	// Verify all data is in the main file
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		t.Errorf("Failed to read file: %v", err)
-	}
-	if len(content) != len(largeData) {
-		t.Errorf("File size = %d, want %d", len(content), len(largeData))
-	}
-}
-
-func TestRotatingWriter_ZeroMaxBackups(t *testing.T) {
-	tempDir := t.TempDir()
-	filename := filepath.Join(tempDir, "zero_backups.log")
-
-	config := &RotatingWriterConfig{
-		Filename:   filename,
-		MaxSize:    1, // 1MB to trigger rotation
-		MaxBackups: 0, // No backups
-	}
-
-	w, err := NewRotatingWriter(config)
-	if err != nil {
-		t.Fatalf("Failed to create writer: %v", err)
-	}
-	defer w.Close()
-
-	// Write initial data to create the file
-	initialData := "Initial data\n"
-	_, err = w.Write([]byte(initialData))
-	if err != nil {
-		t.Errorf("Initial write error = %v", err)
-	}
-
-	// Write data to trigger rotation
-	largeData := strings.Repeat("Y", 1024*1024) // Exactly 1MB, plus initial data will exceed
-	_, err = w.Write([]byte(largeData))
-	if err != nil {
-		t.Errorf("Write() error = %v", err)
-	}
-
-	// With MaxBackups = 0, no backup files should be created
-	backupFile := filename + ".1"
-	if _, err := os.Stat(backupFile); err == nil {
-		t.Error("Backup file should not exist when MaxBackups is 0")
-	}
-
-	// The current file should only contain the new data since rotation removes old data
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		t.Errorf("Failed to read file: %v", err)
-	}
-
-	// Should only contain the large data since old file was removed during rotation
-	if string(content) != largeData {
-		t.Errorf("File should only contain new data after rotation with MaxBackups=0")
-	}
-}
-
-func TestRotatingWriter_ImplementsInterfaces(t *testing.T) {
-	tempDir := t.TempDir()
-	filename := filepath.Join(tempDir, "interface_test.log")
-
-	config := &RotatingWriterConfig{
-		Filename:   filename,
-		MaxSize:    1,
-		MaxBackups: 2,
-	}
-
-	w, err := NewRotatingWriter(config)
-	if err != nil {
-		t.Fatalf("Failed to create writer: %v", err)
-	}
-	defer w.Close()
-
-	// Test io.Writer interface
-	var _ io.Writer = w
-
-	// Test io.WriteCloser interface
-	var _ io.WriteCloser = w
-
-	// Test actual functionality
-	testData := "Interface test\n"
-	n, err := w.Write([]byte(testData))
-	if err != nil {
-		t.Errorf("Write() error = %v", err)
-	}
-	if n != len(testData) {
-		t.Errorf("Write() returned %d, want %d", n, len(testData))
-	}
-}
-
-func TestRotatingWriter_ErrorHandling(t *testing.T) {
-	t.Run("invalid directory permissions", func(t *testing.T) {
-		if os.Getuid() == 0 {
-			t.Skip("Running as root, cannot test permission denied")
-		}
-
-		// Create a directory with no write permissions
-		tempDir := t.TempDir()
-		restrictedDir := filepath.Join(tempDir, "restricted")
-		err := os.Mkdir(restrictedDir, 0444) // Read-only
-		if err != nil {
-			t.Fatalf("Failed to create restricted directory: %v", err)
-		}
-
-		filename := filepath.Join(restrictedDir, "subdir", "test.log")
-		config := &RotatingWriterConfig{
-			Filename:   filename,
-			MaxSize:    1,
-			MaxBackups: 2,
-		}
-
-		_, err = NewRotatingWriter(config)
-		if err == nil {
-			t.Error("Expected error when creating writer in restricted directory")
-		}
-	})
-
-	t.Run("write to closed file", func(t *testing.T) {
-		tempDir := t.TempDir()
-		filename := filepath.Join(tempDir, "closed_test.log")
-
-		config := &RotatingWriterConfig{
-			Filename:   filename,
-			MaxSize:    1,
-			MaxBackups: 2,
-		}
-
-		w, err := NewRotatingWriter(config)
-		if err != nil {
-			t.Fatalf("Failed to create writer: %v", err)
-		}
-
-		// Close the writer
-		w.Close()
-
-		// Try to write to closed writer
-		_, err = w.Write([]byte("test"))
-		if err == nil {
-			t.Error("Expected error when writing to closed writer")
-		}
-	})
-}
-
-func TestRotatingWriter_RotationFailureRecovery(t *testing.T) {
-	tempDir := t.TempDir()
-	filename := filepath.Join(tempDir, "rotation_recovery.log")
-
-	config := &RotatingWriterConfig{
-		Filename:   filename,
-		MaxSize:    1, // 1MB
-		MaxBackups: 2,
-	}
-
-	w, err := NewRotatingWriter(config)
-	if err != nil {
-		t.Fatalf("Failed to create writer: %v", err)
-	}
-	defer w.Close()
-
-	// Write initial data
-	initialData := "Initial data\n"
-	_, err = w.Write([]byte(initialData))
-	if err != nil {
-		t.Errorf("Initial write error = %v", err)
-	}
-
-	// Create a situation where rotation might fail by creating a backup file
-	// that can't be overwritten (this is platform-specific behavior)
-	backupFile := filename + ".1"
-	err = os.WriteFile(backupFile, []byte("existing backup"), 0444) // Read-only
-	if err != nil {
-		t.Fatalf("Failed to create read-only backup file: %v", err)
-	}
-
-	// Try to trigger rotation with large data
-	largeData := strings.Repeat("Z", 1024*1024+100) // Over 1MB
-	n, err := w.Write([]byte(largeData))
-	if err != nil {
-		t.Errorf("Write() return error = %v", err)
-	}
-
-	// The write should succeed even if rotation fails
-	if n != len(largeData) {
-		t.Errorf("Write() returned %d bytes, want %d", n, len(largeData))
-	}
-
-	// Clean up the read-only file
-	os.Chmod(backupFile, 0644)
-	os.Remove(backupFile)
-}
-
-func TestRotatingWriter_EmptyWrites(t *testing.T) {
-	tempDir := t.TempDir()
-	filename := filepath.Join(tempDir, "empty_writes.log")
-
-	config := &RotatingWriterConfig{
-		Filename:   filename,
-		MaxSize:    1,
-		MaxBackups: 2,
-	}
-
-	w, err := NewRotatingWriter(config)
-	if err != nil {
-		t.Fatalf("Failed to create writer: %v", err)
-	}
-	defer w.Close()
-
-	// Test empty write
-	n, err := w.Write([]byte{})
-	if err != nil {
-		t.Errorf("Empty write error = %v", err)
-	}
-	if n != 0 {
-		t.Errorf("Empty write returned %d bytes, want 0", n)
-	}
-
-	// Test nil write
-	n, err = w.Write(nil)
-	if err != nil {
-		t.Errorf("Nil write error = %v", err)
-	}
-	if n != 0 {
-		t.Errorf("Nil write returned %d bytes, want 0", n)
-	}
-
-	// Verify current size is still 0
-	if w.currentSize != 0 {
-		t.Errorf("currentSize = %d, want 0 after empty writes", w.currentSize)
-	}
-}
-
 func TestRotatingWriter_LargeWriteExactlyMaxSize(t *testing.T) {
 	tempDir := t.TempDir()
 	filename := filepath.Join(tempDir, "exact_size.log")
@@ -833,7 +953,7 @@ func TestRotatingWriter_LargeWriteExactlyMaxSize(t *testing.T) {
 	}
 }
 
-func TestRotatingWriter_RaceConditionProtection(t *testing.T) {
+func TestRotatingWriter_Concurrency(t *testing.T) {
 	tempDir := t.TempDir()
 	filename := filepath.Join(tempDir, "race_test.log")
 
@@ -1018,31 +1138,6 @@ func TestRotatingWriter_OpenExistingOrNew(t *testing.T) {
 }
 
 func TestRotatingWriter_Write_Coverage(t *testing.T) {
-	t.Run("write to nil file after close", func(t *testing.T) {
-		tempDir := t.TempDir()
-		filename := filepath.Join(tempDir, "write_after_close.log")
-
-		config := &RotatingWriterConfig{
-			Filename:   filename,
-			MaxSize:    1,
-			MaxBackups: 2,
-		}
-
-		w, err := NewRotatingWriter(config)
-		if err != nil {
-			t.Fatalf("Failed to create writer: %v", err)
-		}
-
-		// Close the writer
-		w.Close()
-
-		// Try to write after close
-		_, err = w.Write([]byte("test"))
-		if err == nil {
-			t.Error("Expected error when writing to closed writer")
-		}
-	})
-
 	t.Run("rotation failure but write succeeds", func(t *testing.T) {
 		tempDir := t.TempDir()
 		filename := filepath.Join(tempDir, "rotation_fail.log")
@@ -1275,44 +1370,125 @@ func TestRotatingWriter_Rotate_Coverage(t *testing.T) {
 	})
 }
 
-func TestRotatingWriter_Close_Coverage(t *testing.T) {
-	t.Run("close already closed writer", func(t *testing.T) {
-		tempDir := t.TempDir()
-		filename := filepath.Join(tempDir, "double_close.log")
+func TestRotatingWriter_ConcurrencyWithRotation(t *testing.T) {
+	tempDir := t.TempDir()
+	filename := filepath.Join(tempDir, "concurrent_rotation.log")
 
-		config := &RotatingWriterConfig{
-			Filename:   filename,
-			MaxSize:    1,
-			MaxBackups: 2,
-		}
+	config := &RotatingWriterConfig{
+		Filename:   filename,
+		MaxSize:    1, // Small size to trigger frequent rotations
+		MaxBackups: 5,
+	}
 
-		w, err := NewRotatingWriter(config)
-		if err != nil {
-			t.Fatalf("Failed to create writer: %v", err)
-		}
+	w, err := NewRotatingWriter(config)
+	if err != nil {
+		t.Fatalf("Failed to create writer: %v", err)
+	}
+	defer w.Close()
 
-		// First close
-		err = w.Close()
-		if err != nil {
-			t.Errorf("First close error = %v", err)
-		}
+	const numGoroutines = 20
+	const writesPerGoroutine = 10
 
-		// Second close should not error
-		err = w.Close()
-		if err != nil {
-			t.Errorf("Second close error = %v", err)
-		}
+	var wg sync.WaitGroup
+	errCh := make(chan error, numGoroutines)
+
+	// Start multiple goroutines that will likely trigger concurrent rotations
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			for j := 0; j < writesPerGoroutine; j++ {
+				// Write data that's likely to trigger rotation
+				largeData := strings.Repeat(fmt.Sprintf("%d", id), 50000) // ~50KB per write
+				_, err := w.Write([]byte(largeData))
+				if err != nil {
+					errCh <- fmt.Errorf("goroutine %d, write %d: %w", id, j, err)
+					return
+				}
+
+				// Small delay to increase chance of race conditions
+				time.Sleep(time.Microsecond)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	// Check for race condition errors
+	for err := range errCh {
+		t.Error(err)
+	}
+
+	// Verify that files exist and writer is still functional
+	info, err := os.Stat(filename)
+	if err != nil {
+		t.Errorf("Main file should exist: %v", err)
+	} else if info.Size() == 0 {
+		t.Error("Main file should not be empty")
+	}
+
+	// Test that writer is still functional after concurrent operations
+	finalWrite := "Final test write\n"
+	n, err := w.Write([]byte(finalWrite))
+	if err != nil {
+		t.Errorf("Final write error = %v", err)
+	}
+	if n != len(finalWrite) {
+		t.Errorf("Final write returned %d bytes, want %d", n, len(finalWrite))
+	}
+}
+
+// TODO: Add comprehensive error condition testing using mock filesystem
+// The following error paths need testing but require filesystem mocking:
+// 1. os.Remove failures in rotate() when maxBackups=0
+// 2. os.Rename failures during backup file rotation
+// 3. File write failures during Write()
+// 4. Concurrent rotation failures
+// 5. Disk space exhaustion scenarios
+//
+// Suggested approach: Use a mock filesystem interface or dependency injection
+// to replace direct os calls with controllable mocks that can simulate errors.
+//
+// Example with interface-based approach:
+// type FileSystem interface {
+//     Create(name string) (*os.File, error)
+//     Remove(name string) error
+//     Rename(oldpath, newpath string) error
+//     Stat(name string) (os.FileInfo, error)
+// }
+//
+// Then inject mock implementations that can return specific errors for testing.
+
+/*
+Mock filesystem testing examples (if using github.com/spf13/afero or similar):
+
+func TestRotatingWriter_ErrorConditions_WithMock(t *testing.T) {
+	// These tests would use a mock filesystem to simulate various error conditions
+
+	t.Run("remove failure during rotation with maxBackups=0", func(t *testing.T) {
+		// Setup: mock filesystem that fails on Remove()
+		// Test: trigger rotation and verify error handling
+		// Expected: specific error message about remove failure
 	})
 
-	t.Run("close with nil file", func(t *testing.T) {
-		w := &RotatingWriter{
-			filename: "test.log",
-			file:     nil, // Simulate already closed
-		}
+	t.Run("rename failure during backup rotation", func(t *testing.T) {
+		// Setup: mock filesystem that fails on Rename()
+		// Test: trigger rotation with existing backups
+		// Expected: error logged but rotation continues
+	})
 
-		err := w.Close()
-		if err != nil {
-			t.Errorf("Close with nil file should not error: %v", err)
-		}
+	t.Run("write failure during normal write", func(t *testing.T) {
+		// Setup: mock file that fails on Write()
+		// Test: attempt to write data
+		// Expected: write error propagated to caller
+	})
+
+	t.Run("reopen failure after remove failure", func(t *testing.T) {
+		// Setup: mock that fails on both Remove() and subsequent file operations
+		// Test: trigger rotation with maxBackups=0
+		// Expected: compound error message about both failures
 	})
 }
+*/
