@@ -1,0 +1,4 @@
+github.com/balinomad/go-atomicwriter v1.0.0 h1:M/E2jTARmzFYkdCOjA5e4iuWmu2QUlYOK+yMo8YmRTI=
+github.com/balinomad/go-atomicwriter v1.0.0/go.mod h1:QaEVyXViHIIu61AYG580rjMHsGx2D0/w4GP4//sDezs=
+github.com/balinomad/go-unilog v0.0.0-20251102032341-05a46a3c5ea8 h1:iP4CvQj7t1fbzNBCFwz7hbueoxSzvj4+6yFLyke0SPQ=
+github.com/balinomad/go-unilog v0.0.0-20251102032341-05a46a3c5ea8/go.mod h1:5EdSZoFBnt4JJ9KChNqnMNqGDE721+Hps5VIdQjkwU4=
