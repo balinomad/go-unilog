@@ -63,7 +63,7 @@ func TestNewFallbackLogger(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger, err := unilog.NewFallbackLogger(tt.writer, tt.level)
+			logger, err := unilog.XNewFallbackLogger(tt.writer, tt.level)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewFallbackLogger() error = %v, wantErr %v", err, tt.wantErr)
@@ -156,7 +156,7 @@ func TestFallbackLogger_Log(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := &bytes.Buffer{}
-			logger, err := unilog.NewFallbackLogger(buf, tt.level)
+			logger, err := unilog.XNewFallbackLogger(buf, tt.level)
 			if err != nil {
 				t.Fatalf("NewFallbackLogger() error = %v", err)
 			}
@@ -234,7 +234,7 @@ func TestFallbackLogger_Enabled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger, err := unilog.NewFallbackLogger(io.Discard, tt.configLevel)
+			logger, err := unilog.XNewFallbackLogger(io.Discard, tt.configLevel)
 			if err != nil {
 				t.Fatalf("NewFallbackLogger() error = %v", err)
 			}
@@ -248,7 +248,7 @@ func TestFallbackLogger_Enabled(t *testing.T) {
 }
 
 func TestFallbackLogger_With(t *testing.T) {
-	logger, err := unilog.NewFallbackLogger(io.Discard, unilog.InfoLevel)
+	logger, err := unilog.XNewFallbackLogger(io.Discard, unilog.InfoLevel)
 	if err != nil {
 		t.Fatalf("NewFallbackLogger() error = %v", err)
 	}
@@ -261,7 +261,7 @@ func TestFallbackLogger_With(t *testing.T) {
 }
 
 func TestFallbackLogger_WithGroup(t *testing.T) {
-	logger, err := unilog.NewFallbackLogger(io.Discard, unilog.InfoLevel)
+	logger, err := unilog.XNewFallbackLogger(io.Discard, unilog.InfoLevel)
 	if err != nil {
 		t.Fatalf("NewFallbackLogger() error = %v", err)
 	}
@@ -322,7 +322,7 @@ func TestFallbackLogger_SetLevel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger, err := unilog.NewFallbackLogger(io.Discard, tt.initialLevel)
+			logger, err := unilog.XNewFallbackLogger(io.Discard, tt.initialLevel)
 			if err != nil {
 				t.Fatalf("NewFallbackLogger() error = %v", err)
 			}
@@ -372,7 +372,7 @@ func TestFallbackLogger_SetOutput(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger, err := unilog.NewFallbackLogger(io.Discard, unilog.InfoLevel)
+			logger, err := unilog.XNewFallbackLogger(io.Discard, unilog.InfoLevel)
 			if err != nil {
 				t.Fatalf("NewFallbackLogger() error = %v", err)
 			}
@@ -433,7 +433,7 @@ func TestFallbackLogger_LevelMethods(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := &bytes.Buffer{}
-			logger, err := unilog.NewFallbackLogger(buf, unilog.MinLevel)
+			logger, err := unilog.XNewFallbackLogger(buf, unilog.MinLevel)
 			if err != nil {
 				t.Fatalf("NewFallbackLogger() error = %v", err)
 			}
@@ -454,7 +454,7 @@ func TestFallbackLogger_LevelMethods(t *testing.T) {
 // It re-runs the test with a specific environment variable set.
 func TestFallbackLogger_Fatal(t *testing.T) {
 	if os.Getenv("BE_FATAL") == "1" {
-		logger, _ := unilog.NewFallbackLogger(io.Discard, unilog.FatalLevel)
+		logger, _ := unilog.XNewFallbackLogger(io.Discard, unilog.FatalLevel)
 		logger.Fatal(context.Background(), "fatal message")
 		return
 	}
@@ -472,7 +472,7 @@ func TestFallbackLogger_Fatal(t *testing.T) {
 
 // Test for Panic's call to panic.
 func TestFallbackLogger_Panic(t *testing.T) {
-	logger, err := unilog.NewFallbackLogger(io.Discard, unilog.InfoLevel)
+	logger, err := unilog.XNewFallbackLogger(io.Discard, unilog.InfoLevel)
 	if err != nil {
 		t.Fatalf("NewFallbackLogger() error = %v", err)
 	}
@@ -488,7 +488,7 @@ func TestFallbackLogger_Panic(t *testing.T) {
 
 func TestFallbackLogger_NilContext(t *testing.T) {
 	buf := &bytes.Buffer{}
-	logger, err := unilog.NewFallbackLogger(buf, unilog.InfoLevel)
+	logger, err := unilog.XNewFallbackLogger(buf, unilog.InfoLevel)
 	if err != nil {
 		t.Fatalf("NewFallbackLogger() error = %v", err)
 	}

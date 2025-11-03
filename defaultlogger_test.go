@@ -46,7 +46,7 @@ func TestDefault(t *testing.T) {
 			// Check type
 			switch tt.wantType {
 			case "*unilog.fallbackLogger":
-				if _, ok := logger.(*unilog.FallbackLogger); !ok {
+				if _, ok := logger.(*unilog.XFallbackLogger); !ok {
 					t.Errorf("expected %s, got %T", tt.wantType, logger)
 				}
 			case "*unilog.mockLogger":
@@ -118,7 +118,7 @@ func TestSetDefault(t *testing.T) {
 				// Setting nil should cause Default() to create fallback
 				unilog.SetDefault(nil)
 				got := unilog.Default()
-				if _, ok := got.(*unilog.FallbackLogger); !ok {
+				if _, ok := got.(*unilog.XFallbackLogger); !ok {
 					t.Errorf("Default() after SetDefault(nil) should return fallbackLogger, got %T", got)
 				}
 			}

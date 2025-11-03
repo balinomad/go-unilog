@@ -44,7 +44,7 @@ func TestContext(t *testing.T) {
 		{
 			name: "context with wrong type returns nil and false",
 			setupCtx: func() context.Context {
-				return context.WithValue(context.Background(), unilog.LoggerKey, "not a logger")
+				return context.WithValue(context.Background(), unilog.XLoggerKey, "not a logger")
 			},
 			wantOk:  false,
 			wantNil: true,
@@ -228,7 +228,7 @@ func TestLoggerFromContextOrDefault(t *testing.T) {
 		{
 			name: "handles wrong type in context",
 			setupCtx: func() context.Context {
-				return context.WithValue(context.Background(), unilog.LoggerKey, "not a logger")
+				return context.WithValue(context.Background(), unilog.XLoggerKey, "not a logger")
 			},
 			setupLog: func() {
 				unilog.SetDefault(nil)
