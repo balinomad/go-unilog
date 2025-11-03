@@ -2,62 +2,129 @@ package unilog_test
 
 import (
 	"errors"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/balinomad/go-unilog"
 )
 
-func TestErrorTypes(t *testing.T) {
-	t.Run("Static Errors", func(t *testing.T) {
-		if unilog.ErrNilWriter.Error() != "writer cannot be nil" {
-			t.Errorf("ErrNilWriter has wrong message: %q", unilog.ErrNilWriter.Error())
-		}
-		if unilog.ErrInvalidSourceSkip.Error() != "source skip must be non-negative" {
-			t.Errorf("ErrInvalidSourceSkip has wrong message: %q", unilog.ErrInvalidSourceSkip.Error())
-		}
-	})
+func TestErrorHelpers(t *testing.T) {
+	t.Parallel()
 
-	t.Run("Functional Errors", func(t *testing.T) {
-		baseErr := errors.New("base error")
+	// Define stable underlying errors for testing
+	errUnderlyingAtomic := io.ErrClosedPipe
+	errUnderlyingOption := io.ErrUnexpectedEOF
 
-		tests := []struct {
-			name               string
-			errFunc            func(error) error
-			expectedMsg        string
-			expectedWrappedErr error
-		}{
-			{
-				name:               "ErrAtomicWriterFail",
-				errFunc:            func(_ error) error { return unilog.ErrAtomicWriterFail(baseErr) },
-				expectedMsg:        "failed to create atomic writer: base error",
-				expectedWrappedErr: baseErr,
+	tests := []struct {
+		name           string
+		err            error    // The error returned from the wrapper
+		wantErr        error    // The sentinel error to check for
+		wantUnderlying error    // The underlying error to check for
+		wantContains   []string // Substrings the error message must contain
+	}{
+		{
+			name:           "atomic_writer_error",
+			err:            unilog.XAtomicWriterError(errUnderlyingAtomic),
+			wantErr:        unilog.ErrAtomicWriterFail,
+			wantUnderlying: errUnderlyingAtomic,
+			wantContains: []string{
+				unilog.ErrAtomicWriterFail.Error(),
+				errUnderlyingAtomic.Error(),
 			},
-			{
-				name:               "ErrFailedOption",
-				errFunc:            func(_ error) error { return unilog.ErrFailedOption(baseErr) },
-				expectedMsg:        "failed to apply option: base error",
-				expectedWrappedErr: baseErr,
+		},
+		{
+			name:           "option_error",
+			err:            unilog.XOptionError(errUnderlyingOption),
+			wantErr:        unilog.ErrFailedOption,
+			wantUnderlying: errUnderlyingOption,
+			wantContains: []string{
+				unilog.ErrFailedOption.Error(),
+				errUnderlyingOption.Error(),
 			},
-		}
+		},
+		{
+			name:    "invalid_format_error",
+			err:     unilog.XInvalidFormatError("foo", []string{"bar", "baz"}),
+			wantErr: unilog.ErrInvalidFormat,
+			wantContains: []string{
+				unilog.ErrInvalidFormat.Error(),
+				`"foo"`,
+				"[bar baz]",
+			},
+		},
+		{
+			name:    "invalid_format_error_empty_accepted",
+			err:     unilog.XInvalidFormatError("foo", nil),
+			wantErr: unilog.ErrInvalidFormat,
+			wantContains: []string{
+				unilog.ErrInvalidFormat.Error(),
+				`"foo"`,
+				"[]",
+			},
+		},
+	}
 
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				err := tt.errFunc(baseErr)
-				if err.Error() != tt.expectedMsg {
-					t.Errorf("error message = %q, want %q", err.Error(), tt.expectedMsg)
-				}
-				if !errors.Is(err, tt.expectedWrappedErr) {
-					t.Errorf("error does not wrap the base error")
-				}
-			})
-		}
-	})
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("ErrInvalidFormat", func(t *testing.T) {
-		err := unilog.ErrInvalidFormat("xml", "json", "text")
-		expected := `invalid format: "xml", must be one of [json text]`
-		if err.Error() != expected {
-			t.Errorf("ErrInvalidFormat() = %q, want %q", err.Error(), expected)
-		}
-	})
+			if tt.err == nil {
+				t.Fatal("got nil error, expected non-nil")
+			}
+
+			// Check that the error wraps the main sentinel error
+			if !errors.Is(tt.err, tt.wantErr) {
+				t.Errorf("errors.Is(err, wantErr) = false, want true (wantErr: %v, err: %v)", tt.wantErr, tt.err)
+			}
+
+			// Check that the error wraps the underlying error, if specified
+			if tt.wantUnderlying != nil {
+				if !errors.Is(tt.err, tt.wantUnderlying) {
+					t.Errorf("errors.Is(err, wantUnderlying) = false, want true (wantUnderlying: %v, err: %v)", tt.wantUnderlying, tt.err)
+				}
+			}
+
+			// Check the error message content
+			errMsg := tt.err.Error()
+			for _, substr := range tt.wantContains {
+				if !strings.Contains(errMsg, substr) {
+					t.Errorf("error message %q does not contain expected substring %q", errMsg, substr)
+				}
+			}
+		})
+	}
+}
+
+func TestSentinelErrors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		err     error
+		wantMsg string
+	}{
+		{"ErrAtomicWriterFail", unilog.ErrAtomicWriterFail, "failed to create atomic writer"},
+		{"ErrFailedOption", unilog.ErrFailedOption, "failed to apply option"},
+		{"ErrInvalidFormat", unilog.ErrInvalidFormat, "invalid format"},
+		{"ErrInvalidSourceSkip", unilog.ErrInvalidSourceSkip, "source skip must be non-negative"},
+		{"ErrNilWriter", unilog.ErrNilWriter, "writer cannot be nil"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.err == nil {
+				t.Fatal("sentinel error is nil")
+			}
+			if msg := tt.err.Error(); msg != tt.wantMsg {
+				t.Errorf("error message = %q, want %q", msg, tt.wantMsg)
+			}
+			// Check that sentinel errors do not wrap anything
+			if unwrapped := errors.Unwrap(tt.err); unwrapped != nil {
+				t.Errorf("sentinel error unexpectedly unwraps to: %v", unwrapped)
+			}
+		})
+	}
 }
