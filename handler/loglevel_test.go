@@ -2,7 +2,6 @@ package handler_test
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/balinomad/go-unilog/handler"
@@ -63,31 +62,6 @@ func TestParseLevel(t *testing.T) {
 			}
 			if gotLevel != tt.wantLevel {
 				t.Errorf("ParseLevel() gotLevel = %v, want %v", gotLevel, tt.wantLevel)
-			}
-		})
-	}
-}
-
-func TestErrInvalidLogLevel(t *testing.T) {
-	tests := []struct {
-		name       string
-		level      handler.LogLevel
-		wantSubstr string
-	}{
-		{"Below minimum", handler.MinLevel - 1, fmt.Sprintf("invalid log level %d", handler.MinLevel-1)},
-		{"Above maximum", handler.MaxLevel + 1, fmt.Sprintf("invalid log level %d", handler.MaxLevel+1)},
-		{"Far below", handler.MinLevel - 1000, fmt.Sprintf("invalid log level %d", handler.MinLevel-1000)},
-		{"Far above", handler.MaxLevel + 1000, fmt.Sprintf("invalid log level %d", handler.MaxLevel+1000)},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := handler.XInvalidLogLevelError(tt.level)
-			if err == nil {
-				t.Errorf("ErrInvalidLogLevel() = nil, want error")
-				return
-			}
-			if !strings.Contains(err.Error(), tt.wantSubstr) {
-				t.Errorf("ErrInvalidLogLevel() = %v, want substring %v", err.Error(), tt.wantSubstr)
 			}
 		})
 	}

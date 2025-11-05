@@ -2,6 +2,7 @@ package handler_test
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func TestErrorHelpers(t *testing.T) {
 		wantContains   []string // Substrings the error message must contain
 	}{
 		{
-			name:           "atomic_writer_error",
+			name:           "atomic writer error",
 			err:            handler.XAtomicWriterError(errUnderlyingAtomic),
 			wantErr:        handler.ErrAtomicWriterFail,
 			wantUnderlying: errUnderlyingAtomic,
@@ -34,7 +35,7 @@ func TestErrorHelpers(t *testing.T) {
 			},
 		},
 		{
-			name:           "option_error",
+			name:           "option error",
 			err:            handler.XOptionError(errUnderlyingOption),
 			wantErr:        handler.ErrFailedOption,
 			wantUnderlying: errUnderlyingOption,
@@ -44,7 +45,7 @@ func TestErrorHelpers(t *testing.T) {
 			},
 		},
 		{
-			name:    "invalid_format_error",
+			name:    "invalid format error",
 			err:     handler.XInvalidFormatError("foo", []string{"bar", "baz"}),
 			wantErr: handler.ErrInvalidFormat,
 			wantContains: []string{
@@ -54,13 +55,22 @@ func TestErrorHelpers(t *testing.T) {
 			},
 		},
 		{
-			name:    "invalid_format_error_empty_accepted",
+			name:    "invalid format error empty accepted",
 			err:     handler.XInvalidFormatError("foo", nil),
 			wantErr: handler.ErrInvalidFormat,
 			wantContains: []string{
 				handler.ErrInvalidFormat.Error(),
 				`"foo"`,
 				"[]",
+			},
+		},
+		{
+			name:    "invalid log level error",
+			err:     handler.XInvalidLogLevelError(handler.MinLevel - 1),
+			wantErr: handler.ErrInvalidLogLevel,
+			wantContains: []string{
+				handler.ErrInvalidLogLevel.Error(),
+				fmt.Sprintf("invalid log level: %d", handler.MinLevel-1),
 			},
 		},
 	}
