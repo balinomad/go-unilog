@@ -1,4 +1,4 @@
-package unilog
+package handler
 
 import (
 	"fmt"
@@ -73,11 +73,6 @@ func ParseLevel(levelStr string) (LogLevel, error) {
 	return DefaultLevel, fmt.Errorf("unknown log level: %q", levelStr)
 }
 
-// ErrInvalidLogLevel is returned when a LogLevel is out of range.
-func ErrInvalidLogLevel(level LogLevel) error {
-	return fmt.Errorf("invalid log level %d, must be between %d and %d", level, MinLevel, MaxLevel)
-}
-
 // IsValidLogLevel returns true if the given log level is valid.
 func IsValidLogLevel(level LogLevel) bool {
 	return level >= MinLevel && level <= MaxLevel
@@ -86,7 +81,7 @@ func IsValidLogLevel(level LogLevel) bool {
 // ValidateLogLevel returns an error if the given log level is invalid.
 func ValidateLogLevel(level LogLevel) error {
 	if !IsValidLogLevel(level) {
-		return ErrInvalidLogLevel(level)
+		return invalidLogLevelError(level)
 	}
 
 	return nil

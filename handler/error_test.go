@@ -1,4 +1,4 @@
-package unilog_test
+package handler_test
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/balinomad/go-unilog"
+	"github.com/balinomad/go-unilog/handler"
 )
 
 func TestErrorHelpers(t *testing.T) {
@@ -25,40 +25,40 @@ func TestErrorHelpers(t *testing.T) {
 	}{
 		{
 			name:           "atomic_writer_error",
-			err:            unilog.XAtomicWriterError(errUnderlyingAtomic),
-			wantErr:        unilog.ErrAtomicWriterFail,
+			err:            handler.XAtomicWriterError(errUnderlyingAtomic),
+			wantErr:        handler.ErrAtomicWriterFail,
 			wantUnderlying: errUnderlyingAtomic,
 			wantContains: []string{
-				unilog.ErrAtomicWriterFail.Error(),
+				handler.ErrAtomicWriterFail.Error(),
 				errUnderlyingAtomic.Error(),
 			},
 		},
 		{
 			name:           "option_error",
-			err:            unilog.XOptionError(errUnderlyingOption),
-			wantErr:        unilog.ErrFailedOption,
+			err:            handler.XOptionError(errUnderlyingOption),
+			wantErr:        handler.ErrFailedOption,
 			wantUnderlying: errUnderlyingOption,
 			wantContains: []string{
-				unilog.ErrFailedOption.Error(),
+				handler.ErrFailedOption.Error(),
 				errUnderlyingOption.Error(),
 			},
 		},
 		{
 			name:    "invalid_format_error",
-			err:     unilog.XInvalidFormatError("foo", []string{"bar", "baz"}),
-			wantErr: unilog.ErrInvalidFormat,
+			err:     handler.XInvalidFormatError("foo", []string{"bar", "baz"}),
+			wantErr: handler.ErrInvalidFormat,
 			wantContains: []string{
-				unilog.ErrInvalidFormat.Error(),
+				handler.ErrInvalidFormat.Error(),
 				`"foo"`,
 				"[bar baz]",
 			},
 		},
 		{
 			name:    "invalid_format_error_empty_accepted",
-			err:     unilog.XInvalidFormatError("foo", nil),
-			wantErr: unilog.ErrInvalidFormat,
+			err:     handler.XInvalidFormatError("foo", nil),
+			wantErr: handler.ErrInvalidFormat,
 			wantContains: []string{
-				unilog.ErrInvalidFormat.Error(),
+				handler.ErrInvalidFormat.Error(),
 				`"foo"`,
 				"[]",
 			},
@@ -104,11 +104,11 @@ func TestSentinelErrors(t *testing.T) {
 		err     error
 		wantMsg string
 	}{
-		{"ErrAtomicWriterFail", unilog.ErrAtomicWriterFail, "failed to create atomic writer"},
-		{"ErrFailedOption", unilog.ErrFailedOption, "failed to apply option"},
-		{"ErrInvalidFormat", unilog.ErrInvalidFormat, "invalid format"},
-		{"ErrInvalidSourceSkip", unilog.ErrInvalidSourceSkip, "source skip must be non-negative"},
-		{"ErrNilWriter", unilog.ErrNilWriter, "writer cannot be nil"},
+		{"ErrAtomicWriterFail", handler.ErrAtomicWriterFail, "failed to create atomic writer"},
+		{"ErrFailedOption", handler.ErrFailedOption, "failed to apply option"},
+		{"ErrInvalidFormat", handler.ErrInvalidFormat, "invalid format"},
+		{"ErrInvalidSourceSkip", handler.ErrInvalidSourceSkip, "source skip must be non-negative"},
+		{"ErrNilWriter", handler.ErrNilWriter, "writer cannot be nil"},
 	}
 
 	for _, tt := range tests {

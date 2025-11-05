@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/balinomad/go-unilog"
+	"github.com/balinomad/go-unilog/handler"
 )
 
 func TestNewFallbackLogger(t *testing.T) {
@@ -309,13 +310,13 @@ func TestFallbackLogger_SetLevel(t *testing.T) {
 		{
 			name:         "invalid level above max",
 			initialLevel: unilog.InfoLevel,
-			newLevel:     unilog.MaxLevel + 1,
+			newLevel:     handler.MaxLevel + 1,
 			wantErr:      true,
 		},
 		{
 			name:         "invalid level below min",
 			initialLevel: unilog.InfoLevel,
-			newLevel:     unilog.MinLevel - 1,
+			newLevel:     handler.MinLevel - 1,
 			wantErr:      true,
 		},
 	}
@@ -433,7 +434,7 @@ func TestFallbackLogger_LevelMethods(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := &bytes.Buffer{}
-			logger, err := unilog.XNewFallbackLogger(buf, unilog.MinLevel)
+			logger, err := unilog.XNewFallbackLogger(buf, handler.MinLevel)
 			if err != nil {
 				t.Fatalf("NewFallbackLogger() error = %v", err)
 			}

@@ -1,4 +1,4 @@
-module github.com/balinomad/go-unilog/adapter/logrus
+module github.com/balinomad/go-unilog/handler/logrus
 
 go 1.24
 

@@ -6,6 +6,33 @@ package unilog
 import (
 	"context"
 	"io"
+
+	"github.com/balinomad/go-unilog/handler"
+)
+
+// Re-export type so users only import unilog.
+type LogLevel = handler.LogLevel
+
+// Re-export constants.
+const (
+	TraceLevel    LogLevel = handler.TraceLevel
+	DebugLevel    LogLevel = handler.DebugLevel
+	InfoLevel     LogLevel = handler.InfoLevel
+	WarnLevel     LogLevel = handler.WarnLevel
+	ErrorLevel    LogLevel = handler.ErrorLevel
+	CriticalLevel LogLevel = handler.CriticalLevel
+	FatalLevel    LogLevel = handler.FatalLevel
+	PanicLevel    LogLevel = handler.PanicLevel
+)
+
+// Re-export errors.
+var (
+	ErrInvalidLogLevel   error = handler.ErrInvalidLogLevel
+	ErrAtomicWriterFail  error = handler.ErrAtomicWriterFail
+	ErrFailedOption      error = handler.ErrFailedOption
+	ErrInvalidFormat     error = handler.ErrInvalidFormat
+	ErrInvalidSourceSkip error = handler.ErrInvalidSourceSkip
+	ErrNilWriter         error = handler.ErrNilWriter
 )
 
 // CoreLogger is the core logging interface used internally by log adapters.

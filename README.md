@@ -50,7 +50,7 @@ import (
 	"errors"
 
 	"github.com/balinomad/go-unilog"
-	"github.com/balinomad/go-unilog/adapter/slog"
+	"github.com/balinomad/go-unilog/handler/slog"
 )
 
 func main() {

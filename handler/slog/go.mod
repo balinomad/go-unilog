@@ -1,4 +1,4 @@
-module github.com/balinomad/go-unilog/adapter/slog
+module github.com/balinomad/go-unilog/handler/slog
 
 go 1.24
 

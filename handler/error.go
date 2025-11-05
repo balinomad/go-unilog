@@ -1,4 +1,4 @@
-package unilog
+package handler
 
 import (
 	"errors"
@@ -7,6 +7,7 @@ import (
 
 // Sentinel errors for common conditions
 var (
+	ErrInvalidLogLevel   = errors.New("invalid log level")
 	ErrAtomicWriterFail  = errors.New("failed to create atomic writer")
 	ErrFailedOption      = errors.New("failed to apply option")
 	ErrInvalidFormat     = errors.New("invalid format")
@@ -27,4 +28,9 @@ func optionError(err error) error {
 // invalidFormatError returns an error with ErrInvalidFormat.
 func invalidFormatError(format string, accepted []string) error {
 	return fmt.Errorf("%w: %q, must be one of %v", ErrInvalidFormat, format, accepted)
+}
+
+// invalidLogLevelError returns an error with ErrInvalidLogLevel when a LogLevel is out of range.
+func invalidLogLevelError(level LogLevel) error {
+	return fmt.Errorf("%w: %d, must be between %d and %d", ErrInvalidLogLevel, level, MinLevel, MaxLevel)
 }

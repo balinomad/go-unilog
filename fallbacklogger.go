@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/balinomad/go-atomicwriter"
+	"github.com/balinomad/go-unilog/handler"
 )
 
 // fallbackLogger provides a minimal, panic-safe Logger implementation.
@@ -89,7 +90,7 @@ func (l *fallbackLogger) WithGroup(name string) Logger {
 }
 
 func (l *fallbackLogger) SetLevel(level LogLevel) error {
-	if err := ValidateLogLevel(level); err != nil {
+	if err := handler.ValidateLogLevel(level); err != nil {
 		return err
 	}
 	l.lvl.Store(int32(level))

@@ -1,4 +1,4 @@
-module github.com/balinomad/go-unilog/adapter/log15
+module github.com/balinomad/go-unilog/handler/log15
 
 go 1.24
 

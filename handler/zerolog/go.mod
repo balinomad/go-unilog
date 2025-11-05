@@ -1,4 +1,4 @@
-module github.com/balinomad/go-unilog/adapter/zerolog
+module github.com/balinomad/go-unilog/handler/zerolog
 
 go 1.24
 
