@@ -35,11 +35,11 @@ var (
 	ErrNilWriter         error = handler.ErrNilWriter
 )
 
-// CoreLogger is the core logging interface used internally by log adapters.
+// coreLogger is the core logging interface used internally by log adapters.
 // It unifies structured and leveled logging across multiple backends.
 // Context is always passed but may be ignored by implementations
 // that do not support context-aware logging.
-type CoreLogger interface {
+type coreLogger interface {
 	// Log is the generic logging entry point.
 	// All level-specific methods (Debug, Info, etc.) delegate to this.
 	// Logging on Fatal and Panic levels will exit the process.
@@ -52,7 +52,7 @@ type CoreLogger interface {
 // Logger is the main logging interface.
 // It provides convenience methods for logging at specific levels and with groups.
 type Logger interface {
-	CoreLogger
+	coreLogger
 
 	// With returns a new Logger that always includes the given key-value pairs.
 	// Implementations should treat this immutably (original logger unchanged).
