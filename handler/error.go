@@ -9,28 +9,28 @@ import (
 var (
 	ErrInvalidLogLevel   = errors.New("invalid log level")
 	ErrAtomicWriterFail  = errors.New("failed to create atomic writer")
-	ErrFailedOption      = errors.New("failed to apply option")
+	ErrOptionApplyFailed = errors.New("failed to apply option")
 	ErrInvalidFormat     = errors.New("invalid format")
 	ErrInvalidSourceSkip = errors.New("source skip must be non-negative")
 	ErrNilWriter         = errors.New("writer cannot be nil")
 )
 
-// atomicWriterError returns an error with ErrAtomicWriterFail.
-func atomicWriterError(err error) error {
+// NewAtomicWriterError returns an error with ErrAtomicWriterFail.
+func NewAtomicWriterError(err error) error {
 	return fmt.Errorf("%w: %w", ErrAtomicWriterFail, err)
 }
 
-// optionError returns an error with ErrFailedOption.
-func optionError(err error) error {
-	return fmt.Errorf("%w: %w", ErrFailedOption, err)
+// NewOptionApplyError returns an error with ErrOptionApplyFailed.
+func NewOptionApplyError(err error) error {
+	return fmt.Errorf("%w: %w", ErrOptionApplyFailed, err)
 }
 
-// invalidFormatError returns an error with ErrInvalidFormat.
-func invalidFormatError(format string, accepted []string) error {
+// NewInvalidFormatError returns an error with ErrInvalidFormat.
+func NewInvalidFormatError(format string, accepted []string) error {
 	return fmt.Errorf("%w: %q, must be one of %v", ErrInvalidFormat, format, accepted)
 }
 
-// invalidLogLevelError returns an error with ErrInvalidLogLevel when a LogLevel is out of range.
-func invalidLogLevelError(level LogLevel) error {
+// NewInvalidLogLevelError returns an error with ErrInvalidLogLevel when a LogLevel is out of range.
+func NewInvalidLogLevelError(level LogLevel) error {
 	return fmt.Errorf("%w: %d, must be between %d and %d", ErrInvalidLogLevel, level, MinLevel, MaxLevel)
 }
