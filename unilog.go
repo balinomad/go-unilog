@@ -29,7 +29,7 @@ const (
 var (
 	ErrInvalidLogLevel   error = handler.ErrInvalidLogLevel
 	ErrAtomicWriterFail  error = handler.ErrAtomicWriterFail
-	ErrFailedOption      error = handler.ErrFailedOption
+	ErrOptionApplyFailed error = handler.ErrOptionApplyFailed
 	ErrInvalidFormat     error = handler.ErrInvalidFormat
 	ErrInvalidSourceSkip error = handler.ErrInvalidSourceSkip
 	ErrNilWriter         error = handler.ErrNilWriter
@@ -95,12 +95,6 @@ type CallerSkipper interface {
 
 	// WithCallerSkipDelta returns a new Logger with caller skip adjusted by delta.
 	WithCallerSkipDelta(delta int) (Logger, error)
-}
-
-// Cloner is implemented by loggers that can be deeply copied.
-type Cloner interface {
-	// Clone returns a deep copy of the logger.
-	Clone() Logger
 }
 
 // Syncer is implemented by loggers that support flushing buffered log entries.
