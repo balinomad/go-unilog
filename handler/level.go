@@ -81,8 +81,23 @@ func IsValidLogLevel(level LogLevel) bool {
 // ValidateLogLevel returns an error if the given log level is invalid.
 func ValidateLogLevel(level LogLevel) error {
 	if !IsValidLogLevel(level) {
-		return invalidLogLevelError(level)
+		return NewInvalidLogLevelError(level)
 	}
-
 	return nil
+}
+
+// LevelMapper converts unilog levels to backend-specific levels.
+type LevelMapper[T any] struct {
+	mappings [MaxLevel - MinLevel + 1]T
+}
+
+// NewLevelMapper creates a mapper with the given level mappings.
+func NewLevelMapper[T any](trace, debug, info, warn, err, critical, fatal, panic T) *LevelMapper[T] {
+	return &LevelMapper[T]{mappings: [...]T{trace, debug, info, warn, err, critical, fatal, panic}}
+}
+
+// Map converts a unilog level to the backend level.
+func (m *LevelMapper[T]) Map(level LogLevel) T {
+	level = min(max(level, MinLevel), MaxLevel)
+	return m.mappings[level-MinLevel]
 }
