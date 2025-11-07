@@ -15,6 +15,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      MODULE_DIRS: "handler io"
+
     steps:
       - uses: actions/checkout@v4
 
@@ -27,13 +30,60 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Build
-        run: go build -v ./...
+      - name: Discover modules (root + MODULE_DIRS)
+        id: discover-modules
+        run: |
+          # Always include root
+          printf ".\n" > modules.txt
 
-      - name: Test with coverage
-        run: go test -v -covermode=count -coverprofile=coverage.txt ./...
+          # MODULE_DIRS is a space-separated list
+          for d in $MODULE_DIRS; do
+            if [ -d "$d" ]; then
+              find "$d" -type f -name go.mod -print | sed 's|/go.mod$||' >> modules.txt || true
+            fi
+          done
+
+          # dedupe and normalize
+          sort -u modules.txt -o modules.txt
+
+          echo "modules<<EOF" >> $GITHUB_OUTPUT
+          cat modules.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Build & test every discovered module
+        run: |
+          set -euo pipefail
+          mkdir -p coverage
+          MODS="${{ steps.discover-modules.outputs.modules }}"
+          echo "Modules to process:"
+          echo "$MODS"
+
+          while IFS= read -r dir; do
+            [ -z "$dir" ] && continue
+            echo "=== Module: $dir ==="
+            pushd "$dir" >/dev/null
+
+            echo "> go build ./..."
+            go build -v ./...
+
+            safe=$(echo "$dir" | sed 's#[/\.]#-#g' | sed 's/^-//; s/-$//')
+            [ -z "$safe" ] && safe=root
+
+            echo "> go test (cover) -> ../coverage/${safe}.out"
+            go test -v -covermode=count -coverprofile="../coverage/${safe}.out" ./... || true
+
+            popd >/dev/null
+          done <<< "$MODS"
+
+          # merge coverage files if any
+          if compgen -G "coverage/*.out" >/dev/null; then
+            echo "Merging coverage files..."
+            go install github.com/wadey/gocovmerge@latest
+            "${GOPATH:-$HOME/go}/bin/gocovmerge" coverage/*.out > coverage.txt
+          fi
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.txt
