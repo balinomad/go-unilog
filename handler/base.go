@@ -56,11 +56,9 @@ func (h *BaseHandler) SetOutput(w io.Writer) error {
 	if errors.Is(err, atomicwriter.ErrNilWriter) {
 		return ErrNilWriter
 	}
-
 	if err != nil {
 		return NewAtomicWriterError(err)
 	}
-
 	return nil
 }
 
