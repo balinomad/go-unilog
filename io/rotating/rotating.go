@@ -3,10 +3,11 @@ package rotating
 import (
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
+	"regexp"
+	"sort"
+	"strconv"
 	"sync"
 )
 
@@ -17,7 +18,7 @@ type RotatingWriter struct {
 	filename    string // The file to write to.
 	maxSize     int64  // Maximum size in bytes before rotation.
 	maxBackups  int    // Maximum number of old log files to retain.
-	file        fs.File
+	file        io.WriteCloser
 	currentSize int64
 }
 
@@ -55,8 +56,7 @@ func NewRotatingWriter(config *RotatingWriterConfig) (*RotatingWriter, error) {
 		maxBackups: config.MaxBackups,
 	}
 
-	err := w.openExistingOrNew()
-	if err != nil {
+	if err := w.openExistingOrNew(); err != nil {
 		return nil, err
 	}
 	return w, nil
@@ -67,18 +67,24 @@ func (w *RotatingWriter) Write(p []byte) (n int, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	// Check if rotation is needed before writing
+	// If rotation is needed before writing, try to rotate
 	if w.maxSize > 0 && w.currentSize+int64(len(p)) > w.maxSize {
-		if err := w.rotate(); err != nil {
-			// If rotation fails, we still try to write to the current file
-			// to avoid losing the log message.
-			return w.file.Write(p)
+		if rerr := w.rotate(); rerr != nil {
+			// Ensure we have an open file before attempting to write
+			if w.file == nil {
+				if oerr := w.openExistingOrNew(); oerr != nil {
+					// Can't reopen; return rotation error and the reopen error.
+					return 0, fmt.Errorf("rotation failed: %v; reopen failed: %v", rerr, oerr)
+				}
+			}
+			// proceed to write to the existing file even though rotation returned an error.
 		}
 	}
 
 	n, err = w.file.Write(p)
-	w.currentSize += int64(n)
-
+	if n > 0 {
+		w.currentSize += int64(n)
+	}
 	return n, err
 }
 
@@ -116,6 +122,9 @@ func (w *RotatingWriter) openExistingOrNew() error {
 	} else if !os.IsNotExist(err) {
 		// Another error occurred (e.g., permission denied)
 		return fmt.Errorf("failed to get file info: %w", err)
+	} else {
+		// File does not exist; size is zero
+		w.currentSize = 0
 	}
 
 	// Open the file for writing, create if it doesn't exist, and append
@@ -175,22 +184,74 @@ func (w *RotatingWriter) rotate() error {
 
 	// Remove backups that exceed the maxBackups limit
 	if w.maxBackups > 0 {
-		// Find all backup files
-		files, err := filepath.Glob(w.filename + ".*")
-		if err == nil {
-			// Sort by number to ensure we remove the oldest ones
-			slices.Sort(files)
-
-			// If we have more backups than allowed, remove the oldest.
-			// This logic is simplified; a robust version would parse backup numbers.
-			// The primary cleanup is handled by the loop above. This is a safety net.
-			if len(files) > w.maxBackups {
-				for _, f := range files[w.maxBackups:] {
-					os.Remove(f)
-				}
-			}
+		if err := removeExtraNumericBackups(w.filename, w.maxBackups); err != nil {
+			// Non-fatal; log to stderr and continue. Rotation already succeeded.
+			fmt.Fprintf(os.Stderr, "warning: cleanup backups failed: %v\n", err)
 		}
 	}
 
 	return w.openExistingOrNew()
+}
+
+// removeExtraNumericBackups removes backup files with numeric suffixes beyond the allowed max.
+// It only considers files of the exact form "basename.N" where N is an integer.
+func removeExtraNumericBackups(fullpath string, maxBackups int) error {
+	dir := filepath.Dir(fullpath)
+	base := filepath.Base(fullpath)
+
+	// regexp: ^<base>\.(\d+)$
+	re := regexp.MustCompile("^" + regexp.QuoteMeta(base) + `\.(\d+)$`)
+
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+
+	type entry struct {
+		name  string
+		index int
+		path  string
+	}
+
+	var entries []entry
+
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		m := re.FindStringSubmatch(name)
+		if m == nil {
+			continue
+		}
+		idx, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		entries = append(entries, entry{
+			name:  name,
+			index: idx,
+			path:  filepath.Join(dir, name),
+		})
+	}
+
+	// If there are fewer or equal backups than allowed, nothing to do.
+	if len(entries) <= maxBackups {
+		return nil
+	}
+
+	// Sort by numeric index ascending (1 is newest after rotation)
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].index < entries[j].index
+	})
+
+	// Remove entries beyond maxBackups. These are the largest-indexed (oldest) backups.
+	for _, e := range entries[maxBackups:] {
+		if rmErr := os.Remove(e.path); rmErr != nil && !os.IsNotExist(rmErr) {
+			// Continue removing other files even if one fails. Return the last error.
+			err = rmErr
+		}
+	}
+
+	return err
 }
