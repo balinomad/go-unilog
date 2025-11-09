@@ -12,7 +12,7 @@ import (
 
 // Helpers
 
-func newHandler(t *testing.T, opts handler.BaseOptions) *handler.BaseHandler {
+func newHandler(t *testing.T, opts *handler.BaseOptions) *handler.BaseHandler {
 	t.Helper()
 	h, err := handler.NewBaseHandler(opts)
 	if err != nil {
@@ -34,7 +34,7 @@ func TestNewBaseHandler(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		t.Parallel()
-		opts := handler.BaseOptions{
+		opts := &handler.BaseOptions{
 			Level:  handler.WarnLevel,
 			Output: io.Discard,
 		}
@@ -49,7 +49,7 @@ func TestNewBaseHandler(t *testing.T) {
 
 	t.Run("nil_writer_error", func(t *testing.T) {
 		t.Parallel()
-		opts := handler.BaseOptions{
+		opts := &handler.BaseOptions{
 			Level:  handler.InfoLevel,
 			Output: nil,
 		}
@@ -69,7 +69,7 @@ func TestNewBaseHandler(t *testing.T) {
 // TestBaseHandler_Enabled verifies the Enabled method logic.
 func TestBaseHandler_Enabled(t *testing.T) {
 	t.Parallel()
-	opts := handler.BaseOptions{
+	opts := &handler.BaseOptions{
 		Level:  handler.InfoLevel,
 		Output: io.Discard,
 	}
@@ -101,7 +101,10 @@ func TestBaseHandler_Enabled(t *testing.T) {
 // TestBaseHandler_SetLevel_change verifies that SetLevel updates the handler level.
 func TestBaseHandler_SetLevel_change(t *testing.T) {
 	t.Parallel()
-	opts := handler.BaseOptions{Level: handler.InfoLevel, Output: io.Discard}
+	opts := &handler.BaseOptions{
+		Level:  handler.InfoLevel,
+		Output: io.Discard,
+	}
 	h := newHandler(t, opts)
 
 	t.Run("change level succeeds", func(t *testing.T) {
@@ -119,7 +122,10 @@ func TestBaseHandler_SetLevel_change(t *testing.T) {
 // Uses table-driven tests for both below-minimum and above-maximum cases.
 func TestBaseHandler_SetLevel_invalid(t *testing.T) {
 	t.Parallel()
-	opts := handler.BaseOptions{Level: handler.InfoLevel, Output: io.Discard}
+	opts := &handler.BaseOptions{
+		Level:  handler.InfoLevel,
+		Output: io.Discard,
+	}
 
 	cases := []struct {
 		name        string
@@ -152,7 +158,10 @@ func TestBaseHandler_SetLevel_invalid(t *testing.T) {
 // TestBaseHandler_SetLevel_concurrent verifies concurrent SetLevel calls do not corrupt state.
 func TestBaseHandler_SetLevel_concurrent(t *testing.T) {
 	t.Parallel()
-	opts := handler.BaseOptions{Level: handler.InfoLevel, Output: io.Discard}
+	opts := &handler.BaseOptions{
+		Level:  handler.InfoLevel,
+		Output: io.Discard,
+	}
 	h := newHandler(t, opts)
 
 	t.Run("concurrent calls remain safe", func(t *testing.T) {
@@ -202,7 +211,7 @@ func (w *errWriter) Sync() error {
 func TestBaseHandler_SetOutput(t *testing.T) {
 	t.Parallel()
 	var buf1 bytes.Buffer
-	opts := handler.BaseOptions{
+	opts := &handler.BaseOptions{
 		Level:  handler.InfoLevel,
 		Output: &buf1,
 	}
@@ -248,7 +257,10 @@ func TestBaseHandler_SetOutput(t *testing.T) {
 
 		customErr := errors.New("disk full")
 		badWriter := &errWriter{err: customErr}
-		h := newHandler(t, handler.BaseOptions{Level: handler.InfoLevel, Output: badWriter})
+		h := newHandler(t, &handler.BaseOptions{
+			Level:  handler.InfoLevel,
+			Output: badWriter,
+		})
 
 		err := h.SetOutput(&buf1)
 		if err == nil {
@@ -266,7 +278,7 @@ func TestBaseHandler_SetOutput(t *testing.T) {
 // TestBaseHandler_AtomicWriter verifies the AtomicWriter getter.
 func TestBaseHandler_AtomicWriter(t *testing.T) {
 	t.Parallel()
-	opts := handler.BaseOptions{
+	opts := &handler.BaseOptions{
 		Level:  handler.InfoLevel,
 		Output: io.Discard,
 	}
