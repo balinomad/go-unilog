@@ -45,12 +45,6 @@ type Syncer interface {
 	Sync() error
 }
 
-// Cloner enables deep copying of handlers.
-type Cloner interface {
-	// Clone returns a deep copy of the handler.
-	Clone() Handler
-}
-
 // Record represents a single log entry with structured attributes.
 type Record struct {
 	// Time is the timestamp of the log entry.
