@@ -8,6 +8,28 @@ Handlers adapt third-party logging libraries to the `handler.Handler` interface.
 - **Attribute conversion**: Converts `[]Attr` to backend format
 - **Optional features**: Implements additional interfaces as supported
 
+### Overall Handler Implementation Strategy
+
+The handler implementations should follow layered architecture with clear responsibilities.
+
+```
+┌─────────────────────────────────────────┐
+│     Handler-Specific Configuration      │  ← Handler's option.go
+├─────────────────────────────────────────┤
+│         BaseHandler (Common)            │  ← handler/base.go
+├─────────────────────────────────────────┤
+│    Backend Logger (zap, slog, etc.)     │  ← Third-party library
+└─────────────────────────────────────────┘
+```
+
+### Responsibilities
+
+| Layer | Owns | Examples |
+|-------|------|----------|
+| `BaseHandler` | Level checking, output swapping, format validation, caller skip tracking, optional prefix management | `Enabled()`, `SetLevel()`, `ApplyPrefix()` |
+| `Handler` (logger adapter) | Backend interfacing, attribute conversion, level mapping, strategy selection | `Handle()`, `Enabled()` |
+| Backend (logger) | Actual log writing, encoding, native features | `zap.Logger.Info()`, `slog.LogAttrs()` |
+
 ## Interface Support Matrix
 
 | Handler  | Chainer | Configurator | Syncer | Cloner | Notes                              |
@@ -85,9 +107,11 @@ BenchmarkStdlog-8    520ns ± 2%
 ## Caller Skip Behavior
 
 ### Overview
+
 Caller skip adjusts which stack frame is reported as the log call site. This is essential for wrapper libraries to report the correct caller location.
 
 ### Default Skip Values
+
 Each handler has a base skip value accounting for internal frames:
 
 | Handler | Base Skip | Reason                                   |
@@ -98,30 +122,6 @@ Each handler has a base skip value accounting for internal frames:
 | logrus  | 2         | Accounts for wrapper + handler.Handle()  |
 | log15   | 2         | Accounts for wrapper + handler.Handle()  |
 | stdlog  | 2         | Accounts for wrapper + handler.Handle()  |
-
-### Adjusting Caller Skip
-Use `WithCallerSkip()` to adjust reported caller location:
-```go
-// If wrapping logger in custom middleware:
-logger, err := logger.WithCallerSkip(1) // Skip one additional frame
-```
-
-### Calculation Formula
-```
-Reported Frame = ActualCaller + BaseSkip + UserSkip
-```
-
-**Example**:
-```go
-func myWrapper() {
-    logger.Info(ctx, "message") // Reports this line
-}
-
-func myWrapperFixed() {
-    logger, _ := logger.WithCallerSkipDelta(1)
-    logger.Info(ctx, "message") // Reports caller of myWrapperFixed
-}
-```
 
 ## Creating Custom Handlers
 
