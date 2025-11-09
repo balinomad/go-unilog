@@ -2,6 +2,7 @@ package unilog
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"runtime"
@@ -12,24 +13,41 @@ import (
 
 // logger wraps a handler.Handler to implement the Logger interface.
 type logger struct {
-	h          handler.Handler
-	callerSkip int
+	h    handler.Handler
+	skip int
 }
 
 // Ensure logger implements the Logger interface.
 var (
-	_ Logger        = (*logger)(nil)
-	_ CallerSkipper = (*logger)(nil)
-	_ Configurator  = (*logger)(nil)
+	_ Logger         = (*logger)(nil)
+	_ AdvancedLogger = (*logger)(nil)
+	_ Configurator   = (*logger)(nil)
 )
 
-// NewLogger creates a Logger that wraps the given handler.
-func NewLogger(h handler.Handler) Logger {
-	return &logger{h: h, callerSkip: 0}
+// internalSkipFrames is the number of stack frames this handler adds
+// between unilog.Logger.Log() and the backend logger call.
+//
+// Frames to skip:
+//
+//	1: logger.Log, logger.LogWithSkip, or convenience methods (e.g. logger.Info, logger.Error)
+//	2: logger.log
+const internalSkipFrames = 2
+
+// NewLogger creates a new logger that wraps the given handler.
+func NewLogger(h handler.Handler) (Logger, error) {
+	return NewAdvancedLogger(h)
 }
 
-// Log implements the Logger interface.
-func (l *logger) Log(ctx context.Context, level LogLevel, msg string, keyValues ...any) {
+// NewAdvancedLogger creates a new advanced logger that wraps the given handler.
+func NewAdvancedLogger(h handler.Handler) (AdvancedLogger, error) {
+	if h == nil {
+		return nil, errors.New("handler cannot be nil")
+	}
+	return &logger{h: h}, nil
+}
+
+// log logs a message at the given level.
+func (l *logger) log(ctx context.Context, level LogLevel, msg string, skipDelta int, keyValues ...any) {
 	// Respect context cancellation
 	if ctx != nil && ctx.Err() != nil {
 		return
@@ -39,21 +57,21 @@ func (l *logger) Log(ctx context.Context, level LogLevel, msg string, keyValues 
 		return
 	}
 
+	// Skip: runtime.Callers + LogWithSkip
+	skip := max(l.skip+skipDelta, 0)
 	var pc uintptr
-	if l.callerSkip >= 0 {
-		var pcs [1]uintptr
-		// Skip: runtime.Callers + this function + Log caller = 3 base frames
-		if runtime.Callers(3+l.callerSkip, pcs[:]) > 0 {
-			pc = pcs[0]
-		}
+	var pcs [1]uintptr
+	if runtime.Callers(internalSkipFrames+skip, pcs[:]) > 0 {
+		pc = pcs[0]
 	}
 
 	record := &handler.Record{
 		Time:    time.Now(),
 		Level:   level,
 		Message: msg,
-		Attrs:   convertKeyValues(keyValues),
+		Attrs:   keyValuePairsToAttrs(keyValues),
 		PC:      pc,
+		Skip:    skip,
 	}
 
 	// Ignore handler errors (logging must not crash the application)
@@ -68,98 +86,70 @@ func (l *logger) Log(ctx context.Context, level LogLevel, msg string, keyValues 
 	}
 }
 
-// Enabled implements the Logger interface.
+// Log is the generic logging entry point. It implements the Logger interface.
+// Logging on Fatal and Panic levels will exit the process.
+func (l *logger) Log(ctx context.Context, level LogLevel, msg string, keyValues ...any) {
+	l.log(ctx, level, msg, 0, keyValues...)
+}
+
+// Enabled reports whether logging at the given level is currently enabled.
 func (l *logger) Enabled(level LogLevel) bool {
 	return l.h.Enabled(level)
 }
 
-// With implements the Logger interface.
+// With returns a new Logger that always includes the given key-value pairs,
+// if the underlying handler supports it.
+// Implementations should treat this immutably (original logger unchanged).
 func (l *logger) With(keyValues ...any) Logger {
 	if len(keyValues) < 2 {
 		return l
 	}
-
 	chainer, ok := l.h.(handler.Chainer)
 	if !ok {
 		return l
 	}
-
-	newHandler := chainer.WithAttrs(convertKeyValues(keyValues))
-	return &logger{h: newHandler, callerSkip: l.callerSkip}
+	return &logger{
+		h:    chainer.WithAttrs(keyValuePairsToAttrs(keyValues)),
+		skip: l.skip,
+	}
 }
 
-// WithGroup implements the Logger interface.
+// WithGroup returns a new Logger that starts a key-value group,
+// if the underlying handler supports it.
+// If name is non-empty, keys of attributes will be qualified with it.
 func (l *logger) WithGroup(name string) Logger {
 	if name == "" {
 		return l
 	}
-
 	chainer, ok := l.h.(handler.Chainer)
 	if !ok {
 		return l
 	}
-
-	newHandler := chainer.WithGroup(name)
-	return &logger{h: newHandler, callerSkip: l.callerSkip}
+	return &logger{
+		h:    chainer.WithGroup(name),
+		skip: l.skip,
+	}
 }
 
 // LogWithSkip implements the CallerSkipper interface.
 func (l *logger) LogWithSkip(ctx context.Context, level LogLevel, msg string, skip int, keyValues ...any) {
-	if ctx != nil && ctx.Err() != nil {
-		return
-	}
-
-	if !l.h.Enabled(level) {
-		return
-	}
-
-	var pc uintptr
-	if l.callerSkip >= 0 {
-		var pcs [1]uintptr
-		// Skip: runtime.Callers + LogWithSkip + caller + additional skip
-		if runtime.Callers(3+l.callerSkip+skip, pcs[:]) > 0 {
-			pc = pcs[0]
-		}
-	}
-
-	record := &handler.Record{
-		Time:    time.Now(),
-		Level:   level,
-		Message: msg,
-		Attrs:   convertKeyValues(keyValues),
-		PC:      pc,
-	}
-
-	_ = l.h.Handle(ctx, record)
-
-	switch level {
-	case FatalLevel:
-		os.Exit(1)
-	case PanicLevel:
-		panic(msg)
-	}
-}
-
-// CallerSkip implements the CallerSkipper interface.
-func (l *logger) CallerSkip() int {
-	return l.callerSkip
+	l.log(ctx, level, msg, l.skip-skip, keyValues...)
 }
 
 // WithCallerSkip implements the CallerSkipper interface.
-func (l *logger) WithCallerSkip(skip int) (Logger, error) {
-	if skip < 0 {
-		return l, ErrInvalidSourceSkip
+func (l *logger) WithCallerSkip(skip int) AdvancedLogger {
+	return &logger{
+		h:    l.h,
+		skip: max(skip, 0),
 	}
-	return &logger{h: l.h, callerSkip: skip}, nil
 }
 
 // WithCallerSkipDelta implements the CallerSkipper interface.
-func (l *logger) WithCallerSkipDelta(delta int) (Logger, error) {
-	newSkip := l.callerSkip + delta
-	if newSkip < 0 {
-		return l, ErrInvalidSourceSkip
+func (l *logger) WithCallerSkipDelta(delta int) AdvancedLogger {
+	return &logger{
+		h:    l.h,
+		skip: max(l.skip+delta, 0),
 	}
-	return &logger{h: l.h, callerSkip: newSkip}, nil
 }
 
 // SetLevel implements the Configurator interface if the handler supports it.
@@ -186,41 +176,48 @@ func (l *logger) Sync() error {
 	return nil
 }
 
-// Convenience level methods
+// Trace is a convenience method that logs a message at the trace level.
 func (l *logger) Trace(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, TraceLevel, msg, keyValues...)
+	l.log(ctx, TraceLevel, msg, 0, keyValues...)
 }
 
+// Debug is a convenience method that logs a message at the debug level.
 func (l *logger) Debug(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, DebugLevel, msg, keyValues...)
+	l.log(ctx, DebugLevel, msg, 0, keyValues...)
 }
 
+// Info is a convenience method that logs a message at the info level.
 func (l *logger) Info(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, InfoLevel, msg, keyValues...)
+	l.log(ctx, InfoLevel, msg, 0, keyValues...)
 }
 
+// Warn is a convenience method that logs a message at the warn level.
 func (l *logger) Warn(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, WarnLevel, msg, keyValues...)
+	l.log(ctx, WarnLevel, msg, 0, keyValues...)
 }
 
+// Error is a convenience method that logs a message at the error level.
 func (l *logger) Error(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, ErrorLevel, msg, keyValues...)
+	l.log(ctx, ErrorLevel, msg, 0, keyValues...)
 }
 
+// Critical is a convenience method that logs a message at the critical level.
 func (l *logger) Critical(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, CriticalLevel, msg, keyValues...)
+	l.log(ctx, CriticalLevel, msg, 0, keyValues...)
 }
 
+// Fatal is a convenience method that logs a message at the fatal level and then exits.
 func (l *logger) Fatal(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, FatalLevel, msg, keyValues...)
+	l.log(ctx, FatalLevel, msg, 0, keyValues...)
 }
 
+// Panic is a convenience method that logs a message at the panic level and then panics.
 func (l *logger) Panic(ctx context.Context, msg string, keyValues ...any) {
-	l.Log(ctx, PanicLevel, msg, keyValues...)
+	l.log(ctx, PanicLevel, msg, 0, keyValues...)
 }
 
 // convertKeyValues converts alternating key-value pairs to []Attr.
-func convertKeyValues(keyValues []any) []handler.Attr {
+func keyValuePairsToAttrs(keyValues []any) []handler.Attr {
 	if len(keyValues) == 0 {
 		return nil
 	}

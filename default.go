@@ -6,6 +6,15 @@ import (
 	"sync"
 )
 
+// internalDefaultSkipFrames is the number of stack frames to skip when logging
+// using the global default logger.
+//
+// Frames to skip:
+//
+//	1: unilog.Log, unilog.LogWithSkip, or convenience methods (e.g. unilog.Info, unilog.Error)
+//	2: unilog.logWithDefault
+const internalDefaultSkipFrames = 2
+
 // global is the global default logger instance.
 // It is initialized on first use.
 var global = struct {
@@ -41,9 +50,9 @@ func Default() Logger {
 // logWithDefault logs a message at the given level using the global default logger.
 func logWithDefault(ctx context.Context, level LogLevel, msg string, skip int, keyValues ...any) {
 	dl := Default()
-	if skipper, ok := dl.(CallerSkipper); ok {
+	if adv, ok := dl.(AdvancedLogger); ok {
 		// Skip two additional frames to account for this function and the caller
-		skipper.LogWithSkip(ctx, level, msg, skip+2, keyValues...)
+		adv.LogWithSkip(ctx, level, msg, skip+internalDefaultSkipFrames, keyValues...)
 		return
 	}
 	dl.Log(ctx, level, msg, keyValues...)

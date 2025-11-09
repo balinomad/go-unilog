@@ -5,7 +5,6 @@ package unilog
 
 import (
 	"context"
-	"io"
 
 	"github.com/balinomad/go-unilog/handler"
 )
@@ -35,13 +34,18 @@ var (
 	ErrNilWriter         error = handler.ErrNilWriter
 )
 
+// Configurator provides dynamic reconfiguration for loggers that support it.
+type Configurator = handler.Configurator
+
+// Syncer is implemented by loggers that support flushing buffered log entries.
+type Syncer = handler.Syncer
+
 // coreLogger is the core logging interface used internally by log adapters.
 // It unifies structured and leveled logging across multiple backends.
 // Context is always passed but may be ignored by implementations
 // that do not support context-aware logging.
 type coreLogger interface {
 	// Log is the generic logging entry point.
-	// All level-specific methods (Debug, Info, etc.) delegate to this.
 	// Logging on Fatal and Panic levels will exit the process.
 	Log(ctx context.Context, level LogLevel, msg string, keyValues ...any)
 
@@ -73,32 +77,18 @@ type Logger interface {
 	Panic(ctx context.Context, msg string, keyValues ...any)    // Logs at the panic level and panics
 }
 
-// Configurator provides dynamic reconfiguration for loggers that support it.
-type Configurator interface {
-	// SetLevel sets the minimum enabled log level.
-	SetLevel(level LogLevel) error
+// AdvancedLogger is an interface for loggers that support advanced features.
+type AdvancedLogger interface {
+	Logger
 
-	// SetOutput changes the log output destination.
-	SetOutput(w io.Writer) error
-}
-
-// CallerSkipper is implemented by loggers that support adjusting caller reporting.
-type CallerSkipper interface {
 	// LogWithSkip logs a message at the given level, skipping the given number of stack frames.
+	// It ignores the current caller skip value and uses the provided one.
+	// Use it when you need a single log entry with a different caller skip.
 	LogWithSkip(ctx context.Context, level LogLevel, msg string, skip int, keyValues ...any)
 
-	// CallerSkip returns the current number of stack frames skipped.
-	CallerSkip() int
+	// WithCallerSkip returns a new AdvancedLogger with the caller skip set.
+	WithCallerSkip(skip int) AdvancedLogger
 
-	// WithCallerSkip returns a new Logger with the caller skip set.
-	WithCallerSkip(skip int) (Logger, error)
-
-	// WithCallerSkipDelta returns a new Logger with caller skip adjusted by delta.
-	WithCallerSkipDelta(delta int) (Logger, error)
-}
-
-// Syncer is implemented by loggers that support flushing buffered log entries.
-type Syncer interface {
-	// Sync flushes any buffered log entries.
-	Sync() error
+	// WithCallerSkipDelta returns a new AdvancedLogger with caller skip adjusted by delta.
+	WithCallerSkipDelta(delta int) AdvancedLogger
 }
