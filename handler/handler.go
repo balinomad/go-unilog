@@ -53,11 +53,25 @@ type Cloner interface {
 
 // Record represents a single log entry with structured attributes.
 type Record struct {
-	Time    time.Time
-	Level   LogLevel
+	// Time is the timestamp of the log entry.
+	Time time.Time
+
+	// Level is the log level of the log entry.
+	Level LogLevel
+
+	// Message is the log message.
 	Message string
-	Attrs   []Attr
-	PC      uintptr // Program counter for source location (0 if unavailable)
+
+	// Attrs is the list of attributes associated with the log entry.
+	Attrs []Attr
+
+	// PC is the program counter for source location (0 if unavailable).
+	// It will be used for loggers that don't support source location natively.
+	PC uintptr
+
+	// Skip is the number of stack frames to skip for source location.
+	// It will be used for loggers that support source location natively.
+	Skip int
 }
 
 // Attr represents a key-value pair in structured logging.
