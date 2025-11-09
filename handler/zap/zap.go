@@ -2,67 +2,127 @@ package zap
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/balinomad/go-atomicwriter"
-	"github.com/balinomad/go-unilog"
+	"github.com/balinomad/go-unilog/handler"
 )
 
-// internalSkipFrames is the fixed number of frames inside this adapter that must always be skipped.
-const internalSkipFrames = 2
+// internalSkipFrames is the number of stack frames this handler adds
+// between zapHandler.Handle() and the backend logger call.
+//
+// Frames to skip:
+//
+//	1:  zapHandler.Handle()
+const internalSkipFrames = 1
 
-// zapLogger is a wrapper around Zap's logger.
-type zapLogger struct {
-	l          *zap.Logger
-	lvl        zap.AtomicLevel
-	out        *atomicwriter.AtomicWriter
-	keyPrefix  string
-	separator  string
-	withCaller bool
-	callerSkip int // Number of stack frames to skip, excluding internalSkipFrames
+// validFormats is the list of supported output formats.
+var validFormats = []string{"json", "console"}
+
+// zapOptions holds configuration for the Zap logger.
+type zapOptions struct {
+	base *handler.BaseOptions
 }
 
-// Ensure zapLogger implements the following interfaces.
+// ZapOption configures the Zap logger creation.
+type ZapOption func(*zapOptions) error
+
+// WithLevel sets the minimum log level.
+func WithLevel(level handler.LogLevel) ZapOption {
+	return func(o *zapOptions) error {
+		return handler.WithLevel(level)(o.base)
+	}
+}
+
+// WithOutput sets the output writer.
+func WithOutput(w io.Writer) ZapOption {
+	return func(o *zapOptions) error {
+		return handler.WithOutput(w)(o.base)
+	}
+}
+
+// WithCaller enables source location reporting.
+// The optional skip parameter adjusts the reported call site by skipping
+// additional stack frames beyond the handler's internal frames.
+//
+// Example:
+//
+//	handler := New(WithCaller(true))        // Reports actual call site
+//	handler := New(WithCaller(true, 1))     // Skip 1 frame (for wrapper)
+func WithCaller(enabled bool, skip ...int) ZapOption {
+	return func(o *zapOptions) error {
+		return handler.WithCaller(enabled, skip...)(o.base)
+	}
+}
+
+// WithTrace enables stack traces for ERROR and above.
+func WithTrace(enabled bool) ZapOption {
+	return func(o *zapOptions) error {
+		return handler.WithTrace(enabled)(o.base)
+	}
+}
+
+// zapHandler is a wrapper around Zap's logger.
+type zapHandler struct {
+	base        *handler.BaseHandler
+	logger      *zap.Logger
+	atomicLevel zap.AtomicLevel
+}
+
+// Ensure zapHandler implements the following interfaces.
 var (
-	_ unilog.Logger        = (*zapLogger)(nil)
-	_ unilog.Configurator  = (*zapLogger)(nil)
-	_ unilog.Cloner        = (*zapLogger)(nil)
-	_ unilog.CallerSkipper = (*zapLogger)(nil)
-	_ unilog.Syncer        = (*zapLogger)(nil)
+	_ handler.Handler      = (*zapHandler)(nil)
+	_ handler.Chainer      = (*zapHandler)(nil)
+	_ handler.Configurator = (*zapHandler)(nil)
+	_ handler.Syncer       = (*zapHandler)(nil)
 )
 
-// New creates a new unilog.Logger instance backed by zap.
-func New(opts ...ZapOption) (unilog.Logger, error) {
+// levelMapper maps unilog log levels to zap log levels.
+var levelMapper = handler.NewLevelMapper(
+	zapcore.DebugLevel, // Trace
+	zapcore.DebugLevel, // Debug
+	zapcore.InfoLevel,  // Info
+	zapcore.WarnLevel,  // Warn
+	zapcore.ErrorLevel, // Error
+	zapcore.ErrorLevel, // Critical
+	zapcore.FatalLevel, // Fatal
+	zapcore.PanicLevel, // Panic
+)
+
+// New creates a new handler.Handler instance backed by zap.
+func New(opts ...ZapOption) (handler.Handler, error) {
 	o := &zapOptions{
-		level:     unilog.InfoLevel,
-		output:    os.Stderr,
-		format:    "json",
-		separator: "_",
+		base: &handler.BaseOptions{
+			Level:        handler.DefaultLevel,
+			Output:       os.Stderr,
+			Format:       "json",
+			ValidFormats: validFormats,
+		},
 	}
 
 	for _, opt := range opts {
 		if err := opt(o); err != nil {
-			return nil, fmt.Errorf("failed to apply option: %w", err)
+			return nil, err
 		}
 	}
+	o.base.CallerSkip += internalSkipFrames
 
-	aw, err := atomicwriter.NewAtomicWriter(o.output)
+	base, err := handler.NewBaseHandler(o.base)
 	if err != nil {
-		return nil, unilog.ErrAtomicWriterFail(err)
+		return nil, err
 	}
 
-	writeSyncer := zapcore.AddSync(aw)
-	atomicLevel := zap.NewAtomicLevelAt(toZapLevel(o.level))
+	writeSyncer := zapcore.AddSync(base.AtomicWriter())
+	atomicLevel := zap.NewAtomicLevelAt(levelMapper.Map(base.Level()))
 
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	var encoder zapcore.Encoder
-	if o.format == "console" {
+	if base.Format() == "console" {
 		encoder = zapcore.NewConsoleEncoder(encoderConfig)
 	} else {
 		encoder = zapcore.NewJSONEncoder(encoderConfig)
@@ -70,252 +130,193 @@ func New(opts ...ZapOption) (unilog.Logger, error) {
 
 	core := zapcore.NewCore(encoder, writeSyncer, atomicLevel)
 
-	// Build zap options natively.
+	// Build zap options natively
 	zapOpts := make([]zap.Option, 0, 2)
-	if o.withCaller {
+	if base.CallerEnabled() {
 		// AddCallerSkip needs to account for our adapter's internal frames
-		zapOpts = append(zapOpts, zap.AddCaller(), zap.AddCallerSkip(o.callerSkip+internalSkipFrames))
+		zapOpts = append(zapOpts, zap.AddCaller(), zap.AddCallerSkip(base.CallerSkip()))
 	}
-	if o.withTrace {
-		// Adds stack trace to logs at Error level and above.
+	if base.TraceEnabled() {
+		// Adds stack trace to logs at Error level and above
 		zapOpts = append(zapOpts, zap.AddStacktrace(zapcore.ErrorLevel))
 	}
 
 	zl := zap.New(core, zapOpts...)
 
-	logger := &zapLogger{
-		l:          zl,
-		lvl:        atomicLevel,
-		out:        aw,
-		separator:  o.separator,
-		withCaller: o.withCaller,
-		callerSkip: o.callerSkip,
-	}
-
-	return logger, nil
+	return &zapHandler{
+		base:        base,
+		logger:      zl,
+		atomicLevel: atomicLevel,
+	}, nil
 }
 
-// Log implements the unilog.Logger interface for zap.
-func (l *zapLogger) log(level unilog.LogLevel, msg string, skip int, keyValues ...any) {
-	if !l.Enabled(level) {
-		return
+// LHandleog implements the handler.Handler interface for zap.
+func (h *zapHandler) Handle(ctx context.Context, r *handler.Record) error {
+	if !h.Enabled(r.Level) {
+		return nil
 	}
 
-	zl := l.l
-	if l.withCaller {
-		if s := max(skip, -l.callerSkip); s != 0 {
-			zl = zl.WithOptions(zap.AddCallerSkip(skip))
+	base := h.base
+	zl := h.logger
+
+	// Apply per-record dynamic skip
+	if base.CallerEnabled() {
+		skip := max(r.Skip, 0)
+		if skip > 0 {
+			zl = zl.WithOptions(zap.AddCallerSkip(max(r.Skip, 0)))
 		}
 	}
 
-	ce := zl.Check(toZapLevel(level), msg)
+	ce := zl.Check(levelMapper.Map(r.Level), r.Message)
 	if ce == nil {
-		return
+		return nil
 	}
 
-	ce.Write(l.processKeyValues(keyValues...)...)
+	ce.Write(h.attrsToZapFields(r.Attrs)...)
 
-	// Handle termination levels
-	switch level {
-	case unilog.FatalLevel:
-		os.Exit(1)
-	case unilog.PanicLevel:
-		panic(msg)
-	}
-}
-
-// Log implements the unilog.Logger interface for zap.
-func (l *zapLogger) Log(_ context.Context, level unilog.LogLevel, msg string, keyValues ...any) {
-	l.log(level, msg, 0, keyValues...)
-}
-
-// LogWithSkip implements the unilog.Logger interface for zap.
-func (l *zapLogger) LogWithSkip(_ context.Context, level unilog.LogLevel, msg string, skip int, keyValues ...any) {
-	l.log(level, msg, skip, keyValues...)
+	return nil
 }
 
 // Enabled checks if the given log level is enabled.
-func (l *zapLogger) Enabled(level unilog.LogLevel) bool {
-	return l.lvl.Enabled(toZapLevel(level))
+func (h *zapHandler) Enabled(level handler.LogLevel) bool {
+	return h.base.Enabled(level)
 }
 
-// With returns a new logger with the provided keyValues added to the context.
-func (l *zapLogger) With(keyValues ...any) unilog.Logger {
-	if len(keyValues) < 2 {
-		return l
+// WithAttrs returns a new logger with the provided keyValues added to the context.
+func (h *zapHandler) WithAttrs(attrs []handler.Attr) handler.Handler {
+	if len(attrs) == 0 {
+		return h
 	}
 
-	clone := l.clone()
-	clone.l = l.l.With(l.processKeyValues(keyValues...)...)
-
-	return clone
+	return &zapHandler{
+		base:        h.base,
+		logger:      h.logger.With(h.attrsToZapFields(attrs)...),
+		atomicLevel: h.atomicLevel,
+	}
 }
 
 // WithGroup returns a Logger that starts a group, if name is non-empty.
-func (l *zapLogger) WithGroup(name string) unilog.Logger {
+func (h *zapHandler) WithGroup(name string) handler.Handler {
 	if name == "" {
-		return l
+		return h
 	}
 
-	clone := l.clone()
-	if l.keyPrefix == "" {
-		clone.keyPrefix = name
-	} else {
-		clone.keyPrefix = l.keyPrefix + l.separator + name
+	return &zapHandler{
+		base:        h.base.WithKeyPrefix(name),
+		logger:      h.logger.With(zap.Namespace(name)),
+		atomicLevel: h.atomicLevel,
 	}
-
-	return clone
 }
 
 // SetLevel dynamically changes the minimum level of logs that will be processed.
-func (l *zapLogger) SetLevel(level unilog.LogLevel) error {
-	if err := unilog.ValidateLogLevel(level); err != nil {
+func (h *zapHandler) SetLevel(level handler.LogLevel) error {
+	// Validate and store in base (atomic store inside BaseHandler)
+	if err := h.base.SetLevel(level); err != nil {
 		return err
 	}
-	l.lvl.SetLevel(toZapLevel(level))
+
+	// Reflect the authoritative base level into zap's atomic level
+	h.atomicLevel.SetLevel(levelMapper.Map(h.base.Level()))
 
 	return nil
 }
 
 // SetOutput changes the destination for log output.
-func (l *zapLogger) SetOutput(w io.Writer) error {
-	return l.out.Swap(w)
+func (h *zapHandler) SetOutput(w io.Writer) error {
+	return h.base.SetOutput(w)
 }
 
 // CallerSkip returns the current number of stack frames being skipped.
-func (l *zapLogger) CallerSkip() int {
-	return l.callerSkip
+func (h *zapHandler) CallerSkip() int {
+	return h.base.CallerSkip()
 }
 
-// WithCallerSkip returns a new Logger instance with the caller skip value updated.
-func (l *zapLogger) WithCallerSkip(skip int) (unilog.Logger, error) {
-	if skip < 0 {
-		return l, unilog.ErrInvalidSourceSkip
+// WithCallerSkip returns a new handler with the caller skip permanently adjusted.
+func (h *zapHandler) WithCallerSkip(skip int) (handler.Handler, error) {
+	current := h.base.CallerSkip() - internalSkipFrames
+	if skip == current {
+		return h, nil
 	}
-
-	return l.WithCallerSkipDelta(skip - l.callerSkip)
+	return h.WithCallerSkipDelta(skip - current)
 }
 
-// WithCallerSkipDelta returns a new Logger instance with the caller skip value altered by the given delta.
-func (l *zapLogger) WithCallerSkipDelta(delta int) (unilog.Logger, error) {
+// WithCallerSkipDelta returns a new handler with the caller skip permanently adjusted by delta.
+func (h *zapHandler) WithCallerSkipDelta(delta int) (handler.Handler, error) {
 	if delta == 0 {
-		return l, nil
+		return h, nil
 	}
 
-	if skip := l.callerSkip + delta; skip < 0 {
-		return l, unilog.ErrInvalidSourceSkip
+	baseClone, err := h.base.WithCallerSkipDelta(delta)
+	if err != nil {
+		return h, err
 	}
 
-	clone := l.clone()
-	clone.l = clone.l.WithOptions(zap.AddCallerSkip(delta))
-	clone.callerSkip = clone.callerSkip + delta
-
-	return clone, nil
-}
-
-func (l *zapLogger) processKeyValues(keyValues ...any) []zap.Field {
-	fields := make([]zap.Field, 0, len(keyValues)/2)
-	prefix := ""
-	if l.keyPrefix != "" {
-		prefix = l.keyPrefix + l.separator
-	}
-
-	for i := 0; i < len(keyValues)-1; i += 2 {
-		key, ok := keyValues[i].(string)
-		if !ok {
-			key = fmt.Sprint(keyValues[i])
-		}
-		fields = append(fields, zap.Any(prefix+key, keyValues[i+1]))
-	}
-	return fields
-}
-
-// clone returns a deep copy of the logger.
-func (l *zapLogger) clone() *zapLogger {
-	return &zapLogger{
-		l:          l.l,
-		lvl:        l.lvl,
-		out:        l.out,
-		keyPrefix:  l.keyPrefix,
-		separator:  l.separator,
-		callerSkip: l.callerSkip,
-	}
-}
-
-// Clone returns a deep copy of the logger as a unilog.Logger.
-func (l *zapLogger) Clone() unilog.Logger {
-	return l.clone()
+	return &zapHandler{
+		base:        baseClone,
+		logger:      h.logger.WithOptions(zap.AddCallerSkip(delta)),
+		atomicLevel: h.atomicLevel,
+	}, nil
 }
 
 // Sync flushes any buffered log entries.
-func (l *zapLogger) Sync() error {
-	return l.l.Sync()
+func (h *zapHandler) Sync() error {
+	return h.logger.Sync()
 }
 
-// Trace logs a message at the trace level.
-func (l *zapLogger) Trace(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.TraceLevel, msg, 0, keyValues...)
+// attrsToZapFields transforms a slice of handler.Attr into zap.Fields.
+func (h *zapHandler) attrsToZapFields(attrs []handler.Attr) []zap.Field {
+	n := len(attrs)
+	fields := make([]zap.Field, 0, n)
+
+	// Compute prefix once
+	prefix := ""
+	if p := h.base.KeyPrefix(); p != "" {
+		prefix = p + h.base.Separator()
+	}
+
+	for i := range n {
+		a := attrs[i]
+		fields = append(fields, attrToZapField(prefix+a.Key, a.Value))
+	}
+
+	return fields
 }
 
-// Debug logs a message at the debug level.
-func (l *zapLogger) Debug(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.DebugLevel, msg, 0, keyValues...)
-}
+// attrToZapField handles the most frequently logged concrete types and falls
+// back to zap.Any for the rest.
+func attrToZapField(key string, v any) zap.Field {
+	if v == nil {
+		return zap.Any(key, nil)
+	}
 
-// Info logs a message at the info level.
-func (l *zapLogger) Info(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.InfoLevel, msg, 0, keyValues...)
-}
-
-// Warn logs a message at the warn level.
-func (l *zapLogger) Warn(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.WarnLevel, msg, 0, keyValues...)
-}
-
-// Error logs a message at the error level.
-func (l *zapLogger) Error(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.ErrorLevel, msg, 0, keyValues...)
-}
-
-// Critical logs a message at the critical level.
-func (l *zapLogger) Critical(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.CriticalLevel, msg, 0, keyValues...)
-}
-
-// Fatal logs a message at the fatal level and exits the process.
-func (l *zapLogger) Fatal(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.FatalLevel, msg, 0, keyValues...)
-}
-
-// Panic logs a message at the panic level and then panics.
-func (l *zapLogger) Panic(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.PanicLevel, msg, 0, keyValues...)
-}
-
-func toZapLevel(level unilog.LogLevel) zapcore.Level {
-	level = min(max(level, unilog.MinLevel), unilog.MaxLevel)
-
-	switch level {
-	case unilog.TraceLevel:
-		// Zap does not have a trace level
-		return zapcore.DebugLevel
-	case unilog.DebugLevel:
-		return zapcore.DebugLevel
-	case unilog.InfoLevel:
-		return zapcore.InfoLevel
-	case unilog.WarnLevel:
-		return zapcore.WarnLevel
-	case unilog.ErrorLevel:
-		return zapcore.ErrorLevel
-	case unilog.CriticalLevel:
-		// Zap does not have a critical level.
-		// DPanicLevel is the closest equivalent, but it will panic in Development
-		return zapcore.DPanicLevel
-	case unilog.FatalLevel:
-		return zapcore.FatalLevel
-	case unilog.PanicLevel:
-		return zapcore.PanicLevel
+	switch vv := v.(type) {
+	case string:
+		return zap.String(key, vv)
+	case bool:
+		return zap.Bool(key, vv)
+	case int:
+		return zap.Int(key, vv)
+	case int8:
+		return zap.Int8(key, vv)
+	case int16:
+		return zap.Int16(key, vv)
+	case int64:
+		return zap.Int64(key, vv)
+	case uint:
+		return zap.Uint(key, vv)
+	case uint8:
+		return zap.Uint8(key, vv)
+	case uint64:
+		return zap.Uint64(key, vv)
+	case float64:
+		return zap.Float64(key, vv)
+	case []byte:
+		return zap.ByteString(key, vv)
+	case time.Time:
+		return zap.Time(key, vv)
+	case error:
+		return zap.Error(vv)
 	default:
-		return zapcore.InfoLevel
+		return zap.Any(key, vv)
 	}
 }
