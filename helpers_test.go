@@ -113,8 +113,8 @@ type mockLoggerWithSkipper struct {
 
 // Ensure mockLogger implements the following interfaces
 var (
-	_ unilog.Logger        = (*mockLoggerWithSkipper)(nil)
-	_ unilog.CallerSkipper = (*mockLoggerWithSkipper)(nil)
+	_ unilog.Logger         = (*mockLoggerWithSkipper)(nil)
+	_ unilog.AdvancedLogger = (*mockLoggerWithSkipper)(nil)
 )
 
 // skipCall holds the parameters for a LogWithSkip call.
@@ -152,7 +152,7 @@ func (m *mockLoggerWithSkipper) CallerSkip() int {
 }
 
 // WithCallerSkip returns a new Logger with the caller skip set.
-func (m *mockLoggerWithSkipper) WithCallerSkip(skip int) (unilog.Logger, error) {
+func (m *mockLoggerWithSkipper) WithCallerSkip(skip int) unilog.AdvancedLogger {
 	newLogger := &mockLoggerWithSkipper{
 		mockLogger: &mockLogger{
 			buf:        m.buf,
@@ -160,11 +160,11 @@ func (m *mockLoggerWithSkipper) WithCallerSkip(skip int) (unilog.Logger, error) 
 		},
 		skipCalls: m.skipCalls,
 	}
-	return newLogger, nil
+	return newLogger
 }
 
 // WithCallerSkipDelta returns a new Logger with caller skip adjusted by delta.
-func (m *mockLoggerWithSkipper) WithCallerSkipDelta(delta int) (unilog.Logger, error) {
+func (m *mockLoggerWithSkipper) WithCallerSkipDelta(delta int) unilog.AdvancedLogger {
 	return m.WithCallerSkip(m.callerSkip + delta)
 }
 
