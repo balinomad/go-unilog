@@ -36,7 +36,7 @@ func TestNewErrorWrappers(t *testing.T) {
 		},
 		{
 			name:           "option error",
-			err:            handler.NewOptionApplyError(errUnderlyingOption),
+			err:            handler.NewOptionApplyError("myOption", errUnderlyingOption),
 			wantErr:        handler.ErrOptionApplyFailed,
 			wantUnderlying: errUnderlyingOption,
 			wantContains: []string{

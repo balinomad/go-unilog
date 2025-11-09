@@ -21,8 +21,8 @@ func NewAtomicWriterError(err error) error {
 }
 
 // NewOptionApplyError returns an error with ErrOptionApplyFailed.
-func NewOptionApplyError(err error) error {
-	return fmt.Errorf("%w: %w", ErrOptionApplyFailed, err)
+func NewOptionApplyError(option string, err error) error {
+	return fmt.Errorf("%w: %s: %w", ErrOptionApplyFailed, option, err)
 }
 
 // NewInvalidFormatError returns an error with ErrInvalidFormat.
