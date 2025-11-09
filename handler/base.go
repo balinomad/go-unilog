@@ -33,6 +33,74 @@ type BaseOptions struct {
 	Separator  string // Key prefix separator (default: "_")
 }
 
+// BaseOption configures the BaseHandler.
+type BaseOption func(*BaseOptions) error
+
+// WithLevel sets the minimum log level.
+func WithLevel(level LogLevel) BaseOption {
+	return func(o *BaseOptions) error {
+		if err := ValidateLogLevel(level); err != nil {
+			return NewOptionApplyError("WithLevel", err)
+		}
+		o.Level = level
+		return nil
+	}
+}
+
+// WithOutput sets the output writer.
+func WithOutput(w io.Writer) BaseOption {
+	return func(o *BaseOptions) error {
+		if w == nil {
+			return NewOptionApplyError("WithOutput", ErrNilWriter)
+		}
+		o.Output = w
+		return nil
+	}
+}
+
+// WithFormat sets the output format.
+func WithFormat(format string) BaseOption {
+	return func(o *BaseOptions) error {
+		o.Format = format
+		return nil
+	}
+}
+
+// WithSeparator sets the separator for group key prefixes.
+func WithSeparator(separator string) BaseOption {
+	return func(o *BaseOptions) error {
+		o.Separator = separator
+		return nil
+	}
+}
+
+// WithCaller enables source location reporting.
+// The optional skip parameter adjusts the reported call site by skipping
+// additional stack frames beyond the handler's internal frames.
+//
+// Example:
+//
+//	handler := New(WithCaller(true))        // Reports actual call site
+//	handler := New(WithCaller(true, 1))     // Skip 1 frame (for wrapper)
+func WithCaller(enabled bool, skip ...int) BaseOption {
+	return func(o *BaseOptions) error {
+		o.WithCaller = enabled
+		o.CallerSkip = 0
+		if enabled && len(skip) > 0 && skip[0] > 0 {
+			o.CallerSkip = skip[0]
+		}
+		return nil
+	}
+}
+
+// WithTrace enables stack traces for ERROR and above.
+func WithTrace(enabled bool) BaseOption {
+	return func(o *BaseOptions) error {
+		o.WithTrace = enabled
+		return nil
+	}
+}
+
 // BaseHandler provides shared functionality for handler implementations.
 // Handlers that embed BaseHandler can use its optional helpers or ignore them
 // in favor of their own optimized implementations.
@@ -61,7 +129,7 @@ type BaseHandler struct {
 }
 
 // NewBaseHandler initializes shared resources.
-func NewBaseHandler(opts BaseOptions) (*BaseHandler, error) {
+func NewBaseHandler(opts *BaseOptions) (*BaseHandler, error) {
 	if opts.Output == nil {
 		return nil, NewAtomicWriterError(errors.New("output writer is required"))
 	}
