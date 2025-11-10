@@ -5,6 +5,7 @@ package unilog
 
 import (
 	"context"
+	"io"
 
 	"github.com/balinomad/go-unilog/handler"
 )
@@ -34,29 +35,18 @@ var (
 	ErrNilWriter         error = handler.ErrNilWriter
 )
 
-// Configurator provides dynamic reconfiguration for loggers that support it.
-type Configurator = handler.Configurator
-
-// Syncer is implemented by loggers that support flushing buffered log entries.
-type Syncer = handler.Syncer
-
-// coreLogger is the core logging interface used internally by log adapters.
+// Logger is the main logging interface.
+// It provides convenience methods for logging at specific levels and with groups.
 // It unifies structured and leveled logging across multiple backends.
 // Context is always passed but may be ignored by implementations
 // that do not support context-aware logging.
-type coreLogger interface {
+type Logger interface {
 	// Log is the generic logging entry point.
 	// Logging on Fatal and Panic levels will exit the process.
 	Log(ctx context.Context, level LogLevel, msg string, keyValues ...any)
 
 	// Enabled reports whether logging at the given level is currently enabled.
 	Enabled(level LogLevel) bool
-}
-
-// Logger is the main logging interface.
-// It provides convenience methods for logging at specific levels and with groups.
-type Logger interface {
-	coreLogger
 
 	// With returns a new Logger that always includes the given key-value pairs.
 	// Implementations should treat this immutably (original logger unchanged).
@@ -80,15 +70,49 @@ type Logger interface {
 // AdvancedLogger is an interface for loggers that support advanced features.
 type AdvancedLogger interface {
 	Logger
+	handler.Configurator
+	handler.Syncer
 
 	// LogWithSkip logs a message at the given level, skipping the given number of stack frames.
 	// It ignores the current caller skip value and uses the provided one.
 	// Use it when you need a single log entry with a different caller skip.
 	LogWithSkip(ctx context.Context, level LogLevel, msg string, skip int, keyValues ...any)
 
-	// WithCallerSkip returns a new AdvancedLogger with the caller skip set.
+	// WithCallerSkip returns a new AdvancedLogger with the caller skip set permanently.
 	WithCallerSkip(skip int) AdvancedLogger
 
-	// WithCallerSkipDelta returns a new AdvancedLogger with caller skip adjusted by delta.
+	// WithCallerSkipDelta returns a new AdvancedLogger with caller skip permanently adjusted by delta.
 	WithCallerSkipDelta(delta int) AdvancedLogger
+
+	// WithCaller returns a new AdvancedLogger that enables or disables caller resolution for the logger.
+	// It returns the original logger if the enabled value is unchanged or the handler does not support
+	// caller resolution. By default, caller resolution is disabled.
+	WithCaller(enabled bool) AdvancedLogger
+
+	// WithTrace returns a new AdvancedLogger that enables or disables trace logging for the logger.
+	// It returns the original logger if the enabled value is unchanged or the handler does not support
+	// trace logging. By default, trace logging is disabled.
+	WithTrace(enabled bool) AdvancedLogger
+
+	// WithLevel returns a new AdvancedLogger with a new minimum level applied to the handler.
+	// It returns the original logger if the level value is unchanged or the handler does not support
+	// level control.
+	WithLevel(level LogLevel) AdvancedLogger
+
+	// WithOutput returns a new AdvancedLogger with the output writer set permanently.
+	// It returns the original logger if the writer value is unchanged or the handler does not support
+	// output control.
+	WithOutput(w io.Writer) AdvancedLogger
+
+	// WithHandler returns a new AdvancedLogger that uses the provided handler.
+	// It returns the original logger if the handler value is unchanged.
+	WithHandler(h handler.Handler) AdvancedLogger
+
+	/*
+		Future plans:
+
+		// WithHandlerOption returns a new AdvancedLogger that applies the provided option to the handler.
+		// It returns the original logger if the handler value is unchanged.
+		WithHandlerOption(fn func(h handler.Handler) handler.Handler) AdvancedLogger
+	*/
 }
