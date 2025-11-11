@@ -34,7 +34,7 @@ func (m *mockHandler) HandlerState() handler.HandlerState {
 	return nil
 }
 
-func (m *mockHandler) WithAttrs(attrs []handler.Attr) handler.Chainer {
+func (m *mockHandler) WithAttrs(_ []any) handler.Chainer {
 	if m.withAttrsNil {
 		return nil
 	}
@@ -125,9 +125,9 @@ func TestComplianceChecker_CheckHandle(t *testing.T) {
 			t.Parallel()
 			h := &mockHandler{handleErr: tt.handleErr}
 			r := &handler.Record{
-				Level:   handler.InfoLevel,
-				Message: "test message",
-				Attrs:   []handler.Attr{{Key: "key", Value: "value"}},
+				Level:     handler.InfoLevel,
+				Message:   "test message",
+				KeyValues: []any{"key", "value"},
 			}
 
 			err := checker.CheckHandle(h, r)

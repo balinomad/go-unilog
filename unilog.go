@@ -10,10 +10,10 @@ import (
 	"github.com/balinomad/go-unilog/handler"
 )
 
-// Re-export type so users only import unilog.
+// LogLevel represents log severity levels.
+// Log levels are ordered from least to most severe.
 type LogLevel = handler.LogLevel
 
-// Re-export constants.
 const (
 	TraceLevel    LogLevel = handler.TraceLevel
 	DebugLevel    LogLevel = handler.DebugLevel
@@ -25,7 +25,6 @@ const (
 	PanicLevel    LogLevel = handler.PanicLevel
 )
 
-// Re-export errors.
 var (
 	ErrInvalidLogLevel   error = handler.ErrInvalidLogLevel
 	ErrAtomicWriterFail  error = handler.ErrAtomicWriterFail
@@ -80,13 +79,14 @@ type Logger interface {
 }
 
 // AdvancedLogger is an interface for loggers that support advanced features.
+// With* methods return new instances (immutable pattern) unless the provided value is unchanged.
+// Not all handlers support this interface.
 type AdvancedLogger interface {
 	Logger
 
-	// LogWithSkip logs a message at the given level, skipping the given number of stack frames.
-	// It ignores the current caller skip value and uses the provided one.
+	// LogWithSkip logs a message at the given level, skipping the current caller skip value with delta.
 	// Use it when you need a single log entry with a different caller skip.
-	LogWithSkip(ctx context.Context, level LogLevel, msg string, skip int, keyValues ...any)
+	LogWithSkip(ctx context.Context, level LogLevel, msg string, delta int, keyValues ...any)
 
 	// WithCallerSkip returns a new AdvancedLogger with the caller skip set permanently.
 	// It returns the original logger if the skip value is unchanged.
@@ -131,5 +131,25 @@ type AdvancedLogger interface {
 	*/
 }
 
-// MutableLogger enables mutable runtime reconfiguration of the logger.
-type MutableLogger = handler.Configurator
+// MutableLogger enables mutable runtime reconfiguration.
+// Unlike AdvancedLogger.With* methods (which return new instances),
+// MutableLogger.Set* methods modify the logger in-place atomically.
+// Not all handlers support this interface.
+//
+// To create fully independent loggers, use separate handler instances:
+//
+//	handler1 := slog.New(...)
+//	handler2 := slog.New(...)
+//	logger1, _ := unilog.NewLogger(handler1)
+//	logger2, _ := unilog.NewLogger(handler2)
+type MutableLogger interface {
+	// SetLevel changes the minimum log level that will be processed.
+	// It affects only this logger. Loggers derived from it via With/WithGroup
+	// will not be affected.
+	SetLevel(level LogLevel) error
+
+	// SetOutput changes the output destination for this logger and any loggers
+	// derived from it via With/WithGroup. To create truly independent loggers,
+	// use NewLogger with a separate handler instance.
+	SetOutput(w io.Writer) error
+}

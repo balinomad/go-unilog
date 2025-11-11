@@ -52,7 +52,7 @@ func (c *checker) CheckHandle(h Handler, r *Record) error {
 
 // CheckChainer verifies that Chainer methods return non-nil handlers.
 func (c *checker) CheckChainer(ch Chainer) error {
-	h := ch.WithAttrs([]Attr{{Key: "test", Value: 1}})
+	h := ch.WithAttrs([]any{"test", 1})
 	if h == nil {
 		return errors.New("WithAttrs returned nil")
 	}
@@ -108,9 +108,9 @@ func ComplianceTest(t *testing.T, newHandler func() (Handler, error)) {
 		}
 
 		r := &Record{
-			Level:   InfoLevel,
-			Message: "test",
-			Attrs:   []Attr{{Key: "key", Value: "value"}},
+			Level:     InfoLevel,
+			Message:   "test",
+			KeyValues: []any{"key", "value"},
 		}
 
 		if err := checker.CheckHandle(h, r); err != nil {

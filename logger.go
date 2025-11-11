@@ -133,26 +133,28 @@ var (
 )
 
 // log logs a message at the given level.
-func (l *logger) log(ctx context.Context, level LogLevel, msg string, skipDelta int, keyValues ...any) {
-
+func (l *logger) log(ctx context.Context, level LogLevel, msg string, delta int, keyValues ...any) {
 	// Respect context cancellation
 	if ctx != nil && ctx.Err() != nil {
 		return
 	}
+
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 
 	if !l.h.Enabled(level) {
 		return
 	}
 
 	r := &handler.Record{
-		Time:    time.Now(),
-		Level:   level,
-		Message: msg,
-		Attrs:   keyValuePairsToAttrs(keyValues),
+		Time:      time.Now(),
+		Level:     level,
+		Message:   msg,
+		KeyValues: keyValues,
 	}
 
 	// Handle caller detection
-	skip := l.skip + skipDelta
+	skip := l.skip + delta
 	if l.needsPC {
 		// We call runtime.Caller() to determine the actual call site
 		var pcs [1]uintptr
@@ -199,7 +201,7 @@ func (l *logger) With(keyValues ...any) Logger {
 		return l
 	}
 
-	return l.withChainer(l.ch.WithAttrs(keyValuePairsToAttrs(keyValues)))
+	return l.withChainer(l.ch.WithAttrs(keyValues))
 }
 
 // WithGroup returns a new Logger that starts a key-value group,
@@ -264,7 +266,10 @@ func (l *logger) SetLevel(level LogLevel) error {
 	return nil
 }
 
-// SetOutput changes the destination for log output if the handler supports it.
+// SetOutput changes the log destination for this logger.
+// If this logger was created via With/WithGroup, the output writer is shared
+// with the parent logger. To create independent outputs, construct separate
+// loggers with distinct handler instances.
 func (l *logger) SetOutput(w io.Writer) error {
 	if cf := l.cf; cf != nil {
 		return cf.SetOutput(w)
@@ -280,11 +285,10 @@ func (l *logger) Sync() error {
 	return nil
 }
 
-// LogWithSkip logs a message at the given level, skipping the given number of stack frames.
-// It ignores the current caller skip value and uses the provided one.
+// LogWithSkip logs a message at the given level, skipping the current caller skip value with delta.
 // Use it when you need a single log entry with a different caller skip.
-func (l *logger) LogWithSkip(ctx context.Context, level LogLevel, msg string, skip int, keyValues ...any) {
-	l.log(ctx, level, msg, l.skip-skip, keyValues...)
+func (l *logger) LogWithSkip(ctx context.Context, level LogLevel, msg string, delta int, keyValues ...any) {
+	l.log(ctx, level, msg, delta, keyValues...)
 }
 
 // WithCallerSkip returns a new AdvancedLogger with the caller skip set permanently.
@@ -410,21 +414,4 @@ func (l *logger) withChainer(ch handler.Chainer) Logger {
 	clone.needsSkip = state != nil && clone.adv != nil && state.CallerEnabled()
 
 	return clone
-}
-
-// convertKeyValues converts alternating key-value pairs to []Attr.
-func keyValuePairsToAttrs(keyValues []any) []handler.Attr {
-	if len(keyValues) == 0 {
-		return nil
-	}
-
-	attrs := make([]handler.Attr, 0, len(keyValues)/2)
-	for i := 0; i < len(keyValues)-1; i += 2 {
-		key, ok := keyValues[i].(string)
-		if !ok {
-			continue
-		}
-		attrs = append(attrs, handler.Attr{Key: key, Value: keyValues[i+1]})
-	}
-	return attrs
 }

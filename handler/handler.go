@@ -37,9 +37,9 @@ type Handler interface {
 type Chainer interface {
 	Handler
 
-	// WithAttrs returns a new Chainer with the given attributes attached.
-	// It returns the original logger if the attrs value is unchanged.
-	WithAttrs(attrs []Attr) Chainer
+	// WithAttrs returns a new Chainer with the given key-value pairs added.
+	// It returns the original logger if no key-value pairs are provided.
+	WithAttrs(keyValues []any) Chainer
 
 	// WithGroup returns a new Chainer that qualifies subsequent attribute keys
 	// with the group name. It returns the original logger if the name is empty.
@@ -111,8 +111,8 @@ type Record struct {
 	// Message is the log message.
 	Message string
 
-	// Attrs is the list of attributes associated with the log entry.
-	Attrs []Attr
+	// KeyValues is the list of attributes associated with the log entry.
+	KeyValues []any
 
 	// PC is the program counter for source location (0 if unavailable).
 	// It will be used for loggers that don't support source location natively.
@@ -121,10 +121,4 @@ type Record struct {
 	// Skip is the number of stack frames to skip for source location.
 	// It will be used for loggers that support source location natively.
 	Skip int
-}
-
-// Attr represents a key-value pair in structured logging.
-type Attr struct {
-	Key   string
-	Value any
 }
