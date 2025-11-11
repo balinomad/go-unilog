@@ -74,26 +74,23 @@ func WithSeparator(separator string) BaseOption {
 	}
 }
 
-// WithCaller enables source location reporting.
-// The optional skip parameter adjusts the reported call site by skipping
-// additional stack frames beyond the handler's internal frames.
-//
-// Example:
-//
-//	handler := New(WithCaller(true))        // Reports actual call site
-//	handler := New(WithCaller(true, 1))     // Skip 1 frame (for wrapper)
-func WithCaller(enabled bool, skip ...int) BaseOption {
+// WithCaller enables or disables source location reporting.
+// If enabled, the handler will include the source location of the log
+// call site in the log record. This can be useful for debugging, but may
+// incur a performance hit due to the additional stack frame analysis.
+// The default value is false.
+func WithCaller(enabled bool) BaseOption {
 	return func(o *BaseOptions) error {
 		o.WithCaller = enabled
-		o.CallerSkip = 0
-		if enabled && len(skip) > 0 && skip[0] > 0 {
-			o.CallerSkip = skip[0]
-		}
 		return nil
 	}
 }
 
-// WithTrace enables stack traces for ERROR and above.
+// WithTrace enabless or disables stack traces for ERROR and above.
+// If enabled, the handler will include the stack trace of the log
+// call site in the log record. This can be useful for debugging, but may
+// incur a performance hit due to the additional stack frame analysis.
+// The default value is false.
 func WithTrace(enabled bool) BaseOption {
 	return func(o *BaseOptions) error {
 		o.WithTrace = enabled
@@ -127,6 +124,9 @@ type BaseHandler struct {
 	keyPrefix string
 	separator string
 }
+
+// Ensure BaseHandler implements HandlerState
+var _ HandlerState = (*BaseHandler)(nil)
 
 // NewBaseHandler initializes shared resources.
 func NewBaseHandler(opts *BaseOptions) (*BaseHandler, error) {

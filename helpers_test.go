@@ -3,6 +3,7 @@ package unilog_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"sync"
 
 	"github.com/balinomad/go-unilog"
@@ -105,16 +106,15 @@ func (m *mockLogger) String() string {
 	return m.buf.String()
 }
 
-// mockLoggerWithSkipper implements both Logger and CallerSkipper interfaces.
-type mockLoggerWithSkipper struct {
+// mockAdvancedLogger implements both AdvancedLogger interfaces.
+type mockAdvancedLogger struct {
 	*mockLogger
 	skipCalls []skipCall
 }
 
 // Ensure mockLogger implements the following interfaces
 var (
-	_ unilog.Logger         = (*mockLoggerWithSkipper)(nil)
-	_ unilog.AdvancedLogger = (*mockLoggerWithSkipper)(nil)
+	_ unilog.AdvancedLogger = (*mockAdvancedLogger)(nil)
 )
 
 // skipCall holds the parameters for a LogWithSkip call.
@@ -125,16 +125,16 @@ type skipCall struct {
 	keyValues []any
 }
 
-// newMockLoggerWithSkipper returns a new mockLoggerWithSkipper.
-func newMockLoggerWithSkipper() *mockLoggerWithSkipper {
-	return &mockLoggerWithSkipper{
+// newMockLoggerWithSkipper returns a new mockAdvancedLogger.
+func newMockLoggerWithSkipper() *mockAdvancedLogger {
+	return &mockAdvancedLogger{
 		mockLogger: newMockLogger(),
 		skipCalls:  []skipCall{},
 	}
 }
 
 // LogWithSkip logs a message at the given level, skipping the given number of stack frames.
-func (m *mockLoggerWithSkipper) LogWithSkip(ctx context.Context, level unilog.LogLevel, msg string, skip int, keyValues ...any) {
+func (m *mockAdvancedLogger) LogWithSkip(ctx context.Context, level unilog.LogLevel, msg string, skip int, keyValues ...any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.skipCalls = append(m.skipCalls, skipCall{
@@ -147,13 +147,13 @@ func (m *mockLoggerWithSkipper) LogWithSkip(ctx context.Context, level unilog.Lo
 }
 
 // CallerSkip returns the number of stack frames to skip.
-func (m *mockLoggerWithSkipper) CallerSkip() int {
+func (m *mockAdvancedLogger) CallerSkip() int {
 	return m.callerSkip
 }
 
 // WithCallerSkip returns a new Logger with the caller skip set.
-func (m *mockLoggerWithSkipper) WithCallerSkip(skip int) unilog.AdvancedLogger {
-	newLogger := &mockLoggerWithSkipper{
+func (m *mockAdvancedLogger) WithCallerSkip(skip int) unilog.AdvancedLogger {
+	newLogger := &mockAdvancedLogger{
 		mockLogger: &mockLogger{
 			buf:        m.buf,
 			callerSkip: skip,
@@ -164,8 +164,33 @@ func (m *mockLoggerWithSkipper) WithCallerSkip(skip int) unilog.AdvancedLogger {
 }
 
 // WithCallerSkipDelta returns a new Logger with caller skip adjusted by delta.
-func (m *mockLoggerWithSkipper) WithCallerSkipDelta(delta int) unilog.AdvancedLogger {
+func (m *mockAdvancedLogger) WithCallerSkipDelta(delta int) unilog.AdvancedLogger {
 	return m.WithCallerSkip(m.callerSkip + delta)
+}
+
+// WithCaller returns a new Logger that enables or disables caller resolution.
+func (m *mockAdvancedLogger) WithCaller(enabled bool) unilog.AdvancedLogger {
+	return m
+}
+
+// WithTrace returns a new Logger that enables or disables trace logging.
+func (m *mockAdvancedLogger) WithTrace(enabled bool) unilog.AdvancedLogger {
+	return m
+}
+
+// WithLevel returns a new Logger with a new minimum level applied to the handler.
+func (m *mockAdvancedLogger) WithLevel(level unilog.LogLevel) unilog.AdvancedLogger {
+	return m
+}
+
+// WithOutput returns a new Logger with the output writer set.
+func (m *mockAdvancedLogger) WithOutput(w io.Writer) unilog.AdvancedLogger {
+	return m
+}
+
+// Sync is a no-op for mockAdvancedLogger.
+func (m *mockAdvancedLogger) Sync() error {
+	return nil
 }
 
 // resetDefault resets the global state for tests.

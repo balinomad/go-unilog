@@ -26,8 +26,8 @@ type fallbackLogger struct {
 
 // Ensure fallbackLogger implements the following interfaces.
 var (
-	_ Logger       = (*fallbackLogger)(nil)
-	_ Configurator = (*fallbackLogger)(nil)
+	_ Logger        = (*fallbackLogger)(nil)
+	_ MutableLogger = (*fallbackLogger)(nil)
 )
 
 // newFallbackLogger creates a new fallbackLogger with the given output writer.

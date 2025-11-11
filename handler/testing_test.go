@@ -17,6 +17,11 @@ type mockHandler struct {
 	withGroupNil bool
 }
 
+var (
+	_ handler.Handler = (*mockHandler)(nil)
+	_ handler.Chainer = (*mockHandler)(nil)
+)
+
 func (m *mockHandler) Enabled(level handler.LogLevel) bool {
 	return m.enabled
 }
@@ -25,14 +30,18 @@ func (m *mockHandler) Handle(ctx context.Context, r *handler.Record) error {
 	return m.handleErr
 }
 
-func (m *mockHandler) WithAttrs(attrs []handler.Attr) handler.Handler {
+func (m *mockHandler) HandlerState() handler.HandlerState {
+	return nil
+}
+
+func (m *mockHandler) WithAttrs(attrs []handler.Attr) handler.Chainer {
 	if m.withAttrsNil {
 		return nil
 	}
 	return m
 }
 
-func (m *mockHandler) WithGroup(name string) handler.Handler {
+func (m *mockHandler) WithGroup(name string) handler.Chainer {
 	if m.withGroupNil {
 		return nil
 	}

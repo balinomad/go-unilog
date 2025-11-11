@@ -41,7 +41,7 @@ var (
 // Context is always passed but may be ignored by implementations
 // that do not support context-aware logging.
 type Logger interface {
-	// Log is the generic logging entry point.
+	// Log is the generic logging entry point. It implements the Logger interface.
 	// Logging on Fatal and Panic levels will exit the process.
 	Log(ctx context.Context, level LogLevel, msg string, keyValues ...any)
 
@@ -49,29 +49,39 @@ type Logger interface {
 	Enabled(level LogLevel) bool
 
 	// With returns a new Logger that always includes the given key-value pairs.
-	// Implementations should treat this immutably (original logger unchanged).
 	With(keyValues ...any) Logger
 
 	// WithGroup returns a new Logger that starts a key-value group.
-	// If name is non-empty, keys of attributes will be qualified with it.
 	WithGroup(name string) Logger
 
-	// Convenience level-specific methods (all call Log under the hood).
-	Trace(ctx context.Context, msg string, keyValues ...any)    // Logs at the trace level
-	Debug(ctx context.Context, msg string, keyValues ...any)    // Logs at the debug level
-	Info(ctx context.Context, msg string, keyValues ...any)     // Logs at the info level
-	Warn(ctx context.Context, msg string, keyValues ...any)     // Logs at the warn level
-	Error(ctx context.Context, msg string, keyValues ...any)    // Logs at the error level
-	Critical(ctx context.Context, msg string, keyValues ...any) // Logs at the critical level
-	Fatal(ctx context.Context, msg string, keyValues ...any)    // Logs at the fatal level and exits the process
-	Panic(ctx context.Context, msg string, keyValues ...any)    // Logs at the panic level and panics
+	// Trace is a convenience method that logs a message at the trace level.
+	Trace(ctx context.Context, msg string, keyValues ...any)
+
+	// Debug is a convenience method that logs a message at the debug level.
+	Debug(ctx context.Context, msg string, keyValues ...any)
+
+	// Info is a convenience method that logs a message at the info level.
+	Info(ctx context.Context, msg string, keyValues ...any)
+
+	// Warn is a convenience method that logs a message at the warn level.
+	Warn(ctx context.Context, msg string, keyValues ...any)
+
+	// Error is a convenience method that logs a message at the error level.
+	Error(ctx context.Context, msg string, keyValues ...any)
+
+	// Critical is a convenience method that logs a message at the critical level.
+	Critical(ctx context.Context, msg string, keyValues ...any)
+
+	// Fatal is a convenience method that logs a message at the fatal level and then exits.
+	Fatal(ctx context.Context, msg string, keyValues ...any)
+
+	// Panic is a convenience method that logs a message at the panic level and then panics.
+	Panic(ctx context.Context, msg string, keyValues ...any)
 }
 
 // AdvancedLogger is an interface for loggers that support advanced features.
 type AdvancedLogger interface {
 	Logger
-	handler.Configurator
-	handler.Syncer
 
 	// LogWithSkip logs a message at the given level, skipping the given number of stack frames.
 	// It ignores the current caller skip value and uses the provided one.
@@ -79,6 +89,7 @@ type AdvancedLogger interface {
 	LogWithSkip(ctx context.Context, level LogLevel, msg string, skip int, keyValues ...any)
 
 	// WithCallerSkip returns a new AdvancedLogger with the caller skip set permanently.
+	// It returns the original logger if the skip value is unchanged.
 	WithCallerSkip(skip int) AdvancedLogger
 
 	// WithCallerSkipDelta returns a new AdvancedLogger with caller skip permanently adjusted by delta.
@@ -104,15 +115,21 @@ type AdvancedLogger interface {
 	// output control.
 	WithOutput(w io.Writer) AdvancedLogger
 
-	// WithHandler returns a new AdvancedLogger that uses the provided handler.
-	// It returns the original logger if the handler value is unchanged.
-	WithHandler(h handler.Handler) AdvancedLogger
+	// Sync flushes buffered log entries if supported by the handler. Returns error on flush failure.
+	Sync() error
 
 	/*
 		Future plans:
+
+		// WithHandler returns a new AdvancedLogger that uses the provided handler.
+		// It returns the original logger if the handler value is unchanged.
+		WithHandler(h handler.Handler) AdvancedLogger
 
 		// WithHandlerOption returns a new AdvancedLogger that applies the provided option to the handler.
 		// It returns the original logger if the handler value is unchanged.
 		WithHandlerOption(fn func(h handler.Handler) handler.Handler) AdvancedLogger
 	*/
 }
+
+// MutableLogger enables mutable runtime reconfiguration of the logger.
+type MutableLogger = handler.Configurator

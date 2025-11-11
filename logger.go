@@ -6,32 +6,105 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/balinomad/go-unilog/handler"
 )
 
-// logger wraps a handler.Handler to implement the Logger interface.
-type logger struct {
-	h    handler.Handler
-	skip int
+// handlerEntry caches the core components of a logger handler.
+type handlerEntry struct {
+	h         handler.Handler
+	ch        handler.Chainer
+	adv       handler.AdvancedHandler
+	cf        handler.Configurator
+	snc       handler.Syncer
+	state     handler.HandlerState
+	needsPC   bool // true if the record must have a program counter
+	needsSkip bool // true if the record must have a caller skip
+	skip      int  // current caller skip in handler
 }
 
-// Ensure logger implements the Logger interface.
-var (
-	_ Logger         = (*logger)(nil)
-	_ AdvancedLogger = (*logger)(nil)
-	_ Configurator   = (*logger)(nil)
-)
+// newHandlerEntry wraps an already configured handler.Handler
+// with additional metadata and helper functions (interface caching and flag setting).
+// The caller is responsible for ensuring the handler is configured with the correct skip/level.
+func newHandlerEntry(h handler.Handler) handlerEntry {
+	if h == nil {
+		panic("handler cannot be nil")
+	}
+
+	state := h.HandlerState()
+
+	entry := handlerEntry{
+		h:     h,
+		state: state,
+		// skip will be set by the caller
+		needsPC:   true,
+		needsSkip: false,
+	}
+
+	// Optional interfaces
+	if adv, ok := h.(handler.AdvancedHandler); ok {
+		entry.adv = adv
+		entry.needsPC = false
+		entry.needsSkip = state != nil && state.CallerEnabled()
+	}
+	if ch, ok := h.(handler.Chainer); ok {
+		entry.ch = ch
+	}
+	if cf, ok := h.(handler.Configurator); ok {
+		entry.cf = cf
+	}
+	if snc, ok := h.(handler.Syncer); ok {
+		entry.snc = snc
+	}
+
+	return entry
+}
+
+// newHandlerEntryWithSkip wraps a handler.Handler with additional metadata and helper functions.
+// It is used internally by the logger implementation to optimize the logging process.
+// If skip is valid, this function may produce a new handler with a different caller skip.
+// If skip is not valid, or the handler does not support caller skip, the original handler is returned.
+// Nil handler.Handler is not allowed.
+func newHandlerEntryWithSkip(h handler.Handler, skip int) handlerEntry {
+	if h == nil {
+		panic("handler cannot be nil")
+	}
+
+	// Set caller skip in the handler
+	skip = max(skip, 0)
+	if ah, ok := h.(handler.AdvancedHandler); ok && skip > 0 {
+		h = ah.WithCallerSkip(skip)
+	}
+
+	entry := newHandlerEntry(h)
+	entry.skip = skip
+
+	return entry
+}
+
+// logger wraps a handler.Handler to implement the Logger interface.
+// It is thread-safe.
+type logger struct {
+	handlerEntry              // cached handler components
+	skip         int          // current caller skip
+	mu           sync.RWMutex // mutex for thread-safe operations
+}
+
+// Ensure logger implements the AdvancedLogger interface, which extends Logger.
+var _ AdvancedLogger = (*logger)(nil)
 
 // internalSkipFrames is the number of stack frames this handler adds
 // between unilog.Logger.Log() and the backend logger call.
+// It will be ignored if the backend logger does not support caller-skip natively.
 //
 // Frames to skip:
 //
-//	1: logger.Log, logger.LogWithSkip, or convenience methods (e.g. logger.Info, logger.Error)
-//	2: logger.log
-const internalSkipFrames = 2
+//  1. logger.Log(), logger.LogWithSkip(), or convenience methods (e.g. logger.Info(), logger.Error())
+//  2. logger.log()
+//  3. handler.Handle()
+const internalSkipFrames = 3
 
 // NewLogger creates a new logger that wraps the given handler.
 func NewLogger(h handler.Handler) (Logger, error) {
@@ -43,11 +116,25 @@ func NewAdvancedLogger(h handler.Handler) (AdvancedLogger, error) {
 	if h == nil {
 		return nil, errors.New("handler cannot be nil")
 	}
-	return &logger{h: h}, nil
+
+	entry := newHandlerEntryWithSkip(h, internalSkipFrames)
+
+	return &logger{
+		handlerEntry: entry,
+		skip:         entry.skip,
+	}, nil
 }
+
+// Ensure logger implements the Logger interface.
+var (
+	_ Logger         = (*logger)(nil)
+	_ AdvancedLogger = (*logger)(nil)
+	_ MutableLogger  = (*logger)(nil)
+)
 
 // log logs a message at the given level.
 func (l *logger) log(ctx context.Context, level LogLevel, msg string, skipDelta int, keyValues ...any) {
+
 	// Respect context cancellation
 	if ctx != nil && ctx.Err() != nil {
 		return
@@ -57,25 +144,29 @@ func (l *logger) log(ctx context.Context, level LogLevel, msg string, skipDelta 
 		return
 	}
 
-	// Skip: runtime.Callers + LogWithSkip
-	skip := max(l.skip+skipDelta, 0)
-	var pc uintptr
-	var pcs [1]uintptr
-	if runtime.Callers(internalSkipFrames+skip, pcs[:]) > 0 {
-		pc = pcs[0]
-	}
-
-	record := &handler.Record{
+	r := &handler.Record{
 		Time:    time.Now(),
 		Level:   level,
 		Message: msg,
 		Attrs:   keyValuePairsToAttrs(keyValues),
-		PC:      pc,
-		Skip:    skip,
+	}
+
+	// Handle caller detection
+	skip := l.skip + skipDelta
+	if l.needsPC {
+		// We call runtime.Caller() to determine the actual call site
+		var pcs [1]uintptr
+		// skip-1 is used because we capture the call before handler.Handle()
+		if runtime.Callers(max(skip-1, 0), pcs[:]) > 0 {
+			r.PC = pcs[0]
+		}
+	}
+	if l.needsSkip && skip > 0 {
+		r.Skip = skip
 	}
 
 	// Ignore handler errors (logging must not crash the application)
-	_ = l.h.Handle(ctx, record)
+	_ = l.h.Handle(ctx, r)
 
 	// Handle termination levels
 	switch level {
@@ -101,79 +192,28 @@ func (l *logger) Enabled(level LogLevel) bool {
 // if the underlying handler supports it.
 // Implementations should treat this immutably (original logger unchanged).
 func (l *logger) With(keyValues ...any) Logger {
-	if len(keyValues) < 2 {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	if len(keyValues) < 2 || l.ch == nil {
 		return l
 	}
-	chainer, ok := l.h.(handler.Chainer)
-	if !ok {
-		return l
-	}
-	return &logger{
-		h:    chainer.WithAttrs(keyValuePairsToAttrs(keyValues)),
-		skip: l.skip,
-	}
+
+	return l.withChainer(l.ch.WithAttrs(keyValuePairsToAttrs(keyValues)))
 }
 
 // WithGroup returns a new Logger that starts a key-value group,
 // if the underlying handler supports it.
 // If name is non-empty, keys of attributes will be qualified with it.
 func (l *logger) WithGroup(name string) Logger {
-	if name == "" {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	if name == "" || l.ch == nil {
 		return l
 	}
-	chainer, ok := l.h.(handler.Chainer)
-	if !ok {
-		return l
-	}
-	return &logger{
-		h:    chainer.WithGroup(name),
-		skip: l.skip,
-	}
-}
 
-// LogWithSkip implements the CallerSkipper interface.
-func (l *logger) LogWithSkip(ctx context.Context, level LogLevel, msg string, skip int, keyValues ...any) {
-	l.log(ctx, level, msg, l.skip-skip, keyValues...)
-}
-
-// WithCallerSkip implements the CallerSkipper interface.
-func (l *logger) WithCallerSkip(skip int) AdvancedLogger {
-	return &logger{
-		h:    l.h,
-		skip: max(skip, 0),
-	}
-}
-
-// WithCallerSkipDelta implements the CallerSkipper interface.
-func (l *logger) WithCallerSkipDelta(delta int) AdvancedLogger {
-	return &logger{
-		h:    l.h,
-		skip: max(l.skip+delta, 0),
-	}
-}
-
-// SetLevel implements the Configurator interface if the handler supports it.
-func (l *logger) SetLevel(level LogLevel) error {
-	if cfg, ok := l.h.(Configurator); ok {
-		return cfg.SetLevel(level)
-	}
-	return nil
-}
-
-// SetOutput implements the Configurator interface if the handler supports it.
-func (l *logger) SetOutput(w io.Writer) error {
-	if cfg, ok := l.h.(Configurator); ok {
-		return cfg.SetOutput(w)
-	}
-	return nil
-}
-
-// Sync implements the Syncer interface if the handler supports it.
-func (l *logger) Sync() error {
-	if syncer, ok := l.h.(Syncer); ok {
-		return syncer.Sync()
-	}
-	return nil
+	return l.withChainer(l.ch.WithGroup(name))
 }
 
 // Trace is a convenience method that logs a message at the trace level.
@@ -214,6 +254,162 @@ func (l *logger) Fatal(ctx context.Context, msg string, keyValues ...any) {
 // Panic is a convenience method that logs a message at the panic level and then panics.
 func (l *logger) Panic(ctx context.Context, msg string, keyValues ...any) {
 	l.log(ctx, PanicLevel, msg, 0, keyValues...)
+}
+
+// SetLevel changes the minimum log level that will be processed if the handler supports it.
+func (l *logger) SetLevel(level LogLevel) error {
+	if cf := l.cf; cf != nil {
+		return cf.SetLevel(level)
+	}
+	return nil
+}
+
+// SetOutput changes the destination for log output if the handler supports it.
+func (l *logger) SetOutput(w io.Writer) error {
+	if cf := l.cf; cf != nil {
+		return cf.SetOutput(w)
+	}
+	return nil
+}
+
+// Sync flushes buffered log entries. Returns error on flush failure.
+func (l *logger) Sync() error {
+	if snc := l.snc; snc != nil {
+		return snc.Sync()
+	}
+	return nil
+}
+
+// LogWithSkip logs a message at the given level, skipping the given number of stack frames.
+// It ignores the current caller skip value and uses the provided one.
+// Use it when you need a single log entry with a different caller skip.
+func (l *logger) LogWithSkip(ctx context.Context, level LogLevel, msg string, skip int, keyValues ...any) {
+	l.log(ctx, level, msg, l.skip-skip, keyValues...)
+}
+
+// WithCallerSkip returns a new AdvancedLogger with the caller skip set permanently.
+// It returns the original logger if the skip value is unchanged.
+func (l *logger) WithCallerSkip(skip int) AdvancedLogger {
+	skip = max(skip, 0) + internalSkipFrames
+
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	if l.skip == skip {
+		return l
+	}
+
+	// Return a clone with the same handler and new caller skip
+	// if the handler does not support caller resolution
+	if l.needsPC {
+		return &logger{
+			handlerEntry: l.handlerEntry,
+			skip:         skip,
+		}
+	}
+
+	adv := l.adv.WithCallerSkip(skip)
+	var h handler.Handler = adv
+	state := h.HandlerState()
+
+	clone := &logger{
+		handlerEntry: handlerEntry{
+			h:     h,
+			adv:   adv,
+			state: state,
+		},
+		skip: skip,
+	}
+
+	// Optional interfaces
+	if ch, ok := h.(handler.Chainer); ok {
+		clone.ch = ch
+	}
+	if cf, ok := h.(handler.Configurator); ok {
+		clone.cf = cf
+	}
+	if snc, ok := h.(handler.Syncer); ok {
+		clone.snc = snc
+	}
+
+	clone.needsPC = state == nil || clone.adv == nil
+	clone.needsSkip = state != nil && clone.adv != nil && state.CallerEnabled()
+
+	return clone
+}
+
+// WithCallerSkipDelta returns a new AdvancedLogger with caller skip permanently adjusted by delta.
+func (l *logger) WithCallerSkipDelta(delta int) AdvancedLogger {
+	return l.WithCallerSkip(l.skip + delta)
+}
+
+// WithCaller returns a new AdvancedLogger that enables or disables caller resolution for the logger.
+// It returns the original logger if the enabled value is unchanged or the handler does not support
+// caller resolution. By default, caller resolution is disabled.
+func (l *logger) WithCaller(enabled bool) AdvancedLogger {
+	// TODO: implement
+	return l
+}
+
+// WithTrace returns a new AdvancedLogger that enables or disables trace logging for the logger.
+// It returns the original logger if the enabled value is unchanged or the handler does not support
+// trace logging. By default, trace logging is disabled.
+func (l *logger) WithTrace(enabled bool) AdvancedLogger {
+	// TODO: implement
+	return l
+}
+
+// WithLevel returns a new AdvancedLogger with a new minimum level applied to the handler.
+// It returns the original logger if the level value is unchanged or the handler does not support
+// level control.
+func (l *logger) WithLevel(level LogLevel) AdvancedLogger {
+	// TODO: implement
+	return l
+}
+
+// WithOutput returns a new AdvancedLogger with the output writer set permanently.
+// It returns the original logger if the writer value is unchanged or the handler does not support
+// output control.
+func (l *logger) WithOutput(w io.Writer) AdvancedLogger {
+	// TODO: implement
+	return l
+}
+
+// withChainer returns a new Logger with the given Chainer attached.
+// It returns the original logger if the chainer value is unchanged.
+// The returned logger will have the same skip value as the original logger.
+func (l *logger) withChainer(ch handler.Chainer) Logger {
+	if ch == nil {
+		return l
+	}
+
+	var h handler.Handler = ch
+	state := h.HandlerState()
+
+	clone := &logger{
+		handlerEntry: handlerEntry{
+			h:     h,
+			ch:    ch,
+			state: state,
+		},
+		skip: l.skip,
+	}
+
+	// Optional interfaces
+	if adv, ok := h.(handler.AdvancedHandler); ok {
+		clone.adv = adv
+	}
+	if cf, ok := h.(handler.Configurator); ok {
+		clone.cf = cf
+	}
+	if snc, ok := h.(handler.Syncer); ok {
+		clone.snc = snc
+	}
+
+	clone.needsPC = state == nil || clone.adv == nil
+	clone.needsSkip = state != nil && clone.adv != nil && state.CallerEnabled()
+
+	return clone
 }
 
 // convertKeyValues converts alternating key-value pairs to []Attr.

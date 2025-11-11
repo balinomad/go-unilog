@@ -249,7 +249,7 @@ func TestLogWithSkip(t *testing.T) {
 
 			var output string
 			switch l := tt.logger.(type) {
-			case *mockLoggerWithSkipper:
+			case *mockAdvancedLogger:
 				output = l.String()
 			case *mockLogger:
 				output = l.String()
