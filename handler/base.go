@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"sync"
 	"sync/atomic"
 
 	"github.com/balinomad/go-atomicwriter"
@@ -119,10 +120,9 @@ type BaseHandler struct {
 	withCaller bool
 	withTrace  bool
 	callerSkip int
-
-	// Optional prefix management for handlers without native support
-	keyPrefix string
-	separator string
+	keyPrefix  string
+	separator  string
+	mu         sync.RWMutex // Protects all fields below
 }
 
 // Ensure BaseHandler implements HandlerState
@@ -173,6 +173,11 @@ func (h *BaseHandler) Enabled(level LogLevel) bool {
 	return level >= LogLevel(h.level.Load())
 }
 
+// HandlerState returns an immutable HandlerState that exposes handler state.
+func (h *BaseHandler) HandlerState() HandlerState {
+	return h
+}
+
 // Level returns the current minimum log level.
 func (h *BaseHandler) Level() LogLevel {
 	return LogLevel(h.level.Load())
@@ -185,11 +190,17 @@ func (h *BaseHandler) Format() string {
 
 // CallerEnabled returns whether caller information should be included.
 func (h *BaseHandler) CallerEnabled() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
 	return h.withCaller
 }
 
 // TraceEnabled returns whether stack traces should be included for error-level logs.
 func (h *BaseHandler) TraceEnabled() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
 	return h.withTrace
 }
 
@@ -200,16 +211,25 @@ func (h *BaseHandler) TraceEnabled() bool {
 //
 //	totalSkip := myHandler.internalSkipFrames + h.base.CallerSkip() + dynSkip
 func (h *BaseHandler) CallerSkip() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
 	return h.callerSkip
 }
 
 // KeyPrefix returns the current key prefix.
 func (h *BaseHandler) KeyPrefix() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
 	return h.keyPrefix
 }
 
 // Separator returns the current separator.
 func (h *BaseHandler) Separator() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
 	return h.separator
 }
 
@@ -236,23 +256,29 @@ func (h *BaseHandler) WithCallerSkip(skip int) (*BaseHandler, error) {
 	if skip < 0 {
 		return nil, ErrInvalidSourceSkip
 	}
+
 	clone := h.Clone()
 	clone.callerSkip = skip
+
 	return clone, nil
 }
 
 // WithCallerSkipDelta returns a new handler with caller skip adjusted by delta.
 func (h *BaseHandler) WithCallerSkipDelta(delta int) (*BaseHandler, error) {
-	newSkip := h.callerSkip + delta
-	if newSkip < 0 {
+	skip := h.callerSkip + delta
+	if skip < 0 {
 		return nil, ErrInvalidSourceSkip
 	}
-	return h.WithCallerSkip(newSkip)
+
+	return h.WithCallerSkip(skip)
 }
 
 // Clone returns a shallow copy of BaseHandler for use in handler cloning.
 // When a handler embeds BaseHandler, it should call this in its own Clone method.
 func (h *BaseHandler) Clone() *BaseHandler {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
 	clone := &BaseHandler{
 		out:        h.out,
 		format:     h.format,
@@ -263,6 +289,7 @@ func (h *BaseHandler) Clone() *BaseHandler {
 		separator:  h.separator,
 	}
 	clone.level.Store(h.level.Load())
+
 	return clone
 }
 
@@ -271,7 +298,9 @@ func (h *BaseHandler) SetLevel(level LogLevel) error {
 	if err := ValidateLogLevel(level); err != nil {
 		return err
 	}
+
 	h.level.Store(int32(level))
+
 	return nil
 }
 
@@ -280,9 +309,11 @@ func (h *BaseHandler) SetOutput(w io.Writer) error {
 	if w == nil {
 		return ErrNilWriter
 	}
+
 	if err := h.out.Swap(w); err != nil {
 		return NewAtomicWriterError(err)
 	}
+
 	return nil
 }
 
@@ -292,12 +323,20 @@ func (h *BaseHandler) SetCallerSkip(skip int) error {
 	if skip < 0 {
 		return ErrInvalidSourceSkip
 	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	h.callerSkip = skip
+
 	return nil
 }
 
 // SetSeparator changes the separator used for key prefixes (default: "_").
 func (h *BaseHandler) SetSeparator(sep string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	h.separator = sep
 }
 
@@ -308,6 +347,9 @@ func (h *BaseHandler) SetSeparator(sep string) {
 // Performance note: This implementation is optimized for the common case
 // where no prefix exists. See docs/HANDLERS.md for benchmark comparisons.
 func (h *BaseHandler) ApplyPrefix(key string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	if h.keyPrefix == "" {
 		return key
 	}
