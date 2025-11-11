@@ -6,6 +6,18 @@ import (
 	"time"
 )
 
+// HandlerState is an immutable interface for handlers to expose their state.
+type HandlerState interface {
+	// CallerEnabled returns whether caller information should be included.
+	CallerEnabled() bool
+
+	// TraceEnabled returns whether stack traces should be included for error-level logs.
+	TraceEnabled() bool
+
+	// CallerSkip returns the current caller skip value.
+	CallerSkip() int
+}
+
 // Handler is the core adapter contract that all logger implementations must satisfy.
 type Handler interface {
 	// Handle processes a log record. Must handle nil context gracefully.
@@ -15,22 +27,65 @@ type Handler interface {
 	// Enabled reports whether the handler processes records at the given level.
 	// Called before building expensive Record objects.
 	Enabled(level LogLevel) bool
+
+	// HandlerState returns an immutable HandlerState that exposes handler state.
+	HandlerState() HandlerState
 }
 
-// Chainer extends Handler with attribute and group attachment.
-// Implementations return new Handler instances (immutable pattern).
+// Chainer extends Handler with methods for chaining log attributes.
+// Implementations return new Chainer instances (immutable pattern).
 type Chainer interface {
 	Handler
 
-	// WithAttrs returns a new Handler with the given attributes attached.
-	WithAttrs(attrs []Attr) Handler
+	// WithAttrs returns a new Chainer with the given attributes attached.
+	// It returns the original logger if the attrs value is unchanged.
+	WithAttrs(attrs []Attr) Chainer
 
-	// WithGroup returns a new Handler that qualifies subsequent attribute keys
-	// with the group name.
-	WithGroup(name string) Handler
+	// WithGroup returns a new Chainer that qualifies subsequent attribute keys
+	// with the group name. It returns the original logger if the name is empty.
+	WithGroup(name string) Chainer
 }
 
-// Configurator enables runtime reconfiguration of handler settings.
+// AdvancedHandler extends Handler with immutable configuration methods.
+// These methods mirror the 'With...' methods on the unilog.AdvancedLogger.
+// Implementations return new AdvancedHandler instances (immutable pattern).
+type AdvancedHandler interface {
+	Handler
+
+	// WithLevel returns a new AdvancedHandler with a new minimum level applied.
+	// It returns the original logger if the level value is unchanged.
+	WithLevel(level LogLevel) AdvancedHandler
+
+	// WithOutput returns a new AdvancedHandler with the output writer set permanently.
+	// It returns the original logger if the writer value is unchanged.
+	WithOutput(w io.Writer) AdvancedHandler
+
+	// WithCallerSkip returns a new AdvancedHandler with the absolute
+	// user-visible caller skip set. Negative skip values are clamped to zero.
+	WithCallerSkip(skip int) AdvancedHandler
+
+	// WithCallerSkipDelta returns a new AdvancedHandler with the caller skip
+	// adjusted by delta.
+	// The delta is applied relative to the current skip. Zero delta is a no-op.
+	// If the new skip is negative, it is clamped to zero.
+	WithCallerSkipDelta(delta int) AdvancedHandler
+
+	// WithCaller returns a clone that enables or disables caller resolution.
+	// It returns the original logger if the enabled value is unchanged.
+	// By default, caller resolution is disabled.
+	WithCaller(enabled bool) AdvancedHandler
+
+	// WithTrace returns a new AdvancedHandler that enables or disables trace logging.
+	// It returns the original logger if the enabled value is unchanged.
+	// By default, trace logging is disabled.
+	WithTrace(enabled bool) AdvancedHandler
+}
+
+// Configurator enables mutable runtime reconfiguration of handler settings.
+// Implementing this interface implies the Handler is mutable, allowing for
+// high-speed atomic updates (e.g., level changes) without allocations.
+// This performance gain comes at the cost of immutability; implementers
+// must ensure these methods are safe for concurrent use.
 type Configurator interface {
 	// SetLevel changes the minimum log level that will be processed.
 	SetLevel(level LogLevel) error
