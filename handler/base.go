@@ -513,11 +513,3 @@ func (h *BaseHandler) ApplyPrefix(key string) string {
 	}
 	return prefix + separator + key
 }
-
-// ReadState executes fn while holding read lock.
-// Use for atomic multi-field reads (avoid in hot path; cache instead).
-func (h *BaseHandler) ReadState(fn func()) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	fn()
-}
