@@ -13,18 +13,18 @@ func TestLogLevel_String(t *testing.T) {
 		l    handler.LogLevel
 		want string
 	}{
-		{"Trace level", handler.TraceLevel, "TRACE"},
-		{"Debug level", handler.DebugLevel, "DEBUG"},
-		{"Info level", handler.InfoLevel, "INFO"},
-		{"Warn level", handler.WarnLevel, "WARN"},
-		{"Error level", handler.ErrorLevel, "ERROR"},
-		{"Critical level", handler.CriticalLevel, "CRITICAL"},
-		{"Fatal level", handler.FatalLevel, "FATAL"},
-		{"Panic level", handler.PanicLevel, "PANIC"},
-		{"Below minimum level", handler.MinLevel - 1, fmt.Sprintf("UNKNOWN (%d)", handler.MinLevel-1)},
-		{"Above maximum level", handler.MaxLevel + 1, fmt.Sprintf("UNKNOWN (%d)", handler.MaxLevel+1)},
-		{"Far below minimum", handler.MinLevel - 100, fmt.Sprintf("UNKNOWN (%d)", handler.MinLevel-100)},
-		{"Far above maximum", handler.MaxLevel + 100, fmt.Sprintf("UNKNOWN (%d)", handler.MaxLevel+100)},
+		{"trace level", handler.TraceLevel, "TRACE"},
+		{"debug level", handler.DebugLevel, "DEBUG"},
+		{"info level", handler.InfoLevel, "INFO"},
+		{"warn level", handler.WarnLevel, "WARN"},
+		{"error level", handler.ErrorLevel, "ERROR"},
+		{"critical level", handler.CriticalLevel, "CRITICAL"},
+		{"fatal level", handler.FatalLevel, "FATAL"},
+		{"panic level", handler.PanicLevel, "PANIC"},
+		{"below minimum level", handler.MinLevel - 1, fmt.Sprintf("UNKNOWN (%d)", handler.MinLevel-1)},
+		{"above maximum level", handler.MaxLevel + 1, fmt.Sprintf("UNKNOWN (%d)", handler.MaxLevel+1)},
+		{"far below minimum", handler.MinLevel - 100, fmt.Sprintf("UNKNOWN (%d)", handler.MinLevel-100)},
+		{"far above maximum", handler.MaxLevel + 100, fmt.Sprintf("UNKNOWN (%d)", handler.MaxLevel+100)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -42,16 +42,16 @@ func TestParseLevel(t *testing.T) {
 		wantLevel handler.LogLevel
 		wantErr   bool
 	}{
-		{"Valid TRACE", "TRACE", handler.TraceLevel, false},
-		{"Valid DEBUG", "DEBUG", handler.DebugLevel, false},
-		{"Valid info (lowercase)", "info", handler.InfoLevel, false},
-		{"Valid WaRn (mixed case)", "WaRn", handler.WarnLevel, false},
-		{"Valid ERROR", "ERROR", handler.ErrorLevel, false},
-		{"Valid CRITICAL", "CRITICAL", handler.CriticalLevel, false},
-		{"Valid FATAL", "FATAL", handler.FatalLevel, false},
-		{"Valid PANIC", "PANIC", handler.PanicLevel, false},
-		{"Invalid level", "INVALID", handler.InfoLevel, true},
-		{"Empty string", "", handler.InfoLevel, true},
+		{"valid TRACE", "TRACE", handler.TraceLevel, false},
+		{"valid DEBUG", "DEBUG", handler.DebugLevel, false},
+		{"valid info (lowercase)", "info", handler.InfoLevel, false},
+		{"valid WaRn (mixed case)", "WaRn", handler.WarnLevel, false},
+		{"valid ERROR", "ERROR", handler.ErrorLevel, false},
+		{"valid CRITICAL", "CRITICAL", handler.CriticalLevel, false},
+		{"valid FATAL", "FATAL", handler.FatalLevel, false},
+		{"valid PANIC", "PANIC", handler.PanicLevel, false},
+		{"invalid level", "INVALID", handler.InfoLevel, true},
+		{"empty string", "", handler.InfoLevel, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -73,18 +73,18 @@ func TestIsValidLogLevel(t *testing.T) {
 		level handler.LogLevel
 		want  bool
 	}{
-		{"Valid Trace", handler.TraceLevel, true},
-		{"Valid Debug", handler.DebugLevel, true},
-		{"Valid Info", handler.InfoLevel, true},
-		{"Valid Warn", handler.WarnLevel, true},
-		{"Valid Error", handler.ErrorLevel, true},
-		{"Valid Critical", handler.CriticalLevel, true},
-		{"Valid Fatal", handler.FatalLevel, true},
-		{"Valid Panic", handler.PanicLevel, true},
-		{"Below minimum", handler.MinLevel - 1, false},
-		{"Above maximum", handler.MaxLevel + 1, false},
-		{"Far below minimum", handler.MinLevel - 999, false},
-		{"Far above maximum", handler.MaxLevel + 999, false},
+		{"valid trace", handler.TraceLevel, true},
+		{"valid debug", handler.DebugLevel, true},
+		{"valid info", handler.InfoLevel, true},
+		{"valid warn", handler.WarnLevel, true},
+		{"valid error", handler.ErrorLevel, true},
+		{"valid critical", handler.CriticalLevel, true},
+		{"valid fatal", handler.FatalLevel, true},
+		{"valid panic", handler.PanicLevel, true},
+		{"below minimum", handler.MinLevel - 1, false},
+		{"above maximum", handler.MaxLevel + 1, false},
+		{"far below minimum", handler.MinLevel - 999, false},
+		{"far above maximum", handler.MaxLevel + 999, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,18 +101,18 @@ func TestValidateLogLevel(t *testing.T) {
 		level   handler.LogLevel
 		wantErr bool
 	}{
-		{"Valid Trace", handler.TraceLevel, false},
-		{"Valid Debug", handler.DebugLevel, false},
-		{"Valid Info", handler.InfoLevel, false},
-		{"Valid Warn", handler.WarnLevel, false},
-		{"Valid Error", handler.ErrorLevel, false},
-		{"Valid Critical", handler.CriticalLevel, false},
-		{"Valid Fatal", handler.FatalLevel, false},
-		{"Valid Panic", handler.PanicLevel, false},
-		{"Below minimum", handler.MinLevel - 1, true},
-		{"Above maximum", handler.MaxLevel + 1, true},
-		{"Far below minimum", handler.MinLevel - 999, true},
-		{"Far above maximum", handler.MaxLevel + 999, true},
+		{"valid trace", handler.TraceLevel, false},
+		{"valid debug", handler.DebugLevel, false},
+		{"valid info", handler.InfoLevel, false},
+		{"valid warn", handler.WarnLevel, false},
+		{"valid error", handler.ErrorLevel, false},
+		{"valid critical", handler.CriticalLevel, false},
+		{"valid fatal", handler.FatalLevel, false},
+		{"valid panic", handler.PanicLevel, false},
+		{"below minimum", handler.MinLevel - 1, true},
+		{"above maximum", handler.MaxLevel + 1, true},
+		{"far below minimum", handler.MinLevel - 999, true},
+		{"far above maximum", handler.MaxLevel + 999, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -146,14 +146,14 @@ func TestLevelMapper_Map_AllDefinedLevels_String(t *testing.T) {
 		level handler.LogLevel
 		want  string
 	}{
-		{"Trace maps to TRACE_VAL", handler.TraceLevel, "TRACE_VAL"},
-		{"Debug maps to DEBUG_VAL", handler.DebugLevel, "DEBUG_VAL"},
-		{"Info maps to INFO_VAL", handler.InfoLevel, "INFO_VAL"},
-		{"Warn maps to WARN_VAL", handler.WarnLevel, "WARN_VAL"},
-		{"Error maps to ERROR_VAL", handler.ErrorLevel, "ERROR_VAL"},
-		{"Critical maps to CRITICAL_VAL", handler.CriticalLevel, "CRITICAL_VAL"},
-		{"Fatal maps to FATAL_VAL", handler.FatalLevel, "FATAL_VAL"},
-		{"Panic maps to PANIC_VAL", handler.PanicLevel, "PANIC_VAL"},
+		{"trace maps to TRACE_VAL", handler.TraceLevel, "TRACE_VAL"},
+		{"debug maps to DEBUG_VAL", handler.DebugLevel, "DEBUG_VAL"},
+		{"info maps to INFO_VAL", handler.InfoLevel, "INFO_VAL"},
+		{"warn maps to WARN_VAL", handler.WarnLevel, "WARN_VAL"},
+		{"error maps to ERROR_VAL", handler.ErrorLevel, "ERROR_VAL"},
+		{"critical maps to CRITICAL_VAL", handler.CriticalLevel, "CRITICAL_VAL"},
+		{"fatal maps to FATAL_VAL", handler.FatalLevel, "FATAL_VAL"},
+		{"panic maps to PANIC_VAL", handler.PanicLevel, "PANIC_VAL"},
 	}
 
 	for _, tc := range tests {
@@ -175,11 +175,11 @@ func TestLevelMapper_Map_ClampsOutOfRange_String(t *testing.T) {
 		want  string
 	}{
 		// below MinLevel -> should clamp to TraceLevel (MinLevel)
-		{"Way below MinLevel clamps to Trace", handler.MinLevel - 10, "TRACE_VAL"},
-		{"Just below MinLevel clamps to Trace", handler.MinLevel - 1, "TRACE_VAL"},
+		{"way below MinLevel clamps to Trace", handler.MinLevel - 10, "TRACE_VAL"},
+		{"just below MinLevel clamps to Trace", handler.MinLevel - 1, "TRACE_VAL"},
 		// above MaxLevel -> should clamp to PanicLevel (MaxLevel)
-		{"Just above MaxLevel clamps to Panic", handler.MaxLevel + 1, "PANIC_VAL"},
-		{"Way above MaxLevel clamps to Panic", handler.MaxLevel + 100, "PANIC_VAL"},
+		{"just above MaxLevel clamps to Panic", handler.MaxLevel + 1, "PANIC_VAL"},
+		{"way above MaxLevel clamps to Panic", handler.MaxLevel + 100, "PANIC_VAL"},
 	}
 
 	for _, tc := range tests {

@@ -34,6 +34,10 @@ func (m *mockHandler) HandlerState() handler.HandlerState {
 	return nil
 }
 
+func (m *mockHandler) Features() handler.HandlerFeatures {
+	return handler.HandlerFeatures{}
+}
+
 func (m *mockHandler) WithAttrs(_ []any) handler.Chainer {
 	if m.withAttrsNil {
 		return nil

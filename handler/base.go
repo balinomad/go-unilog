@@ -10,6 +10,14 @@ import (
 	"github.com/balinomad/go-atomicwriter"
 )
 
+// StateFlag is a set of flags used to track handler state.
+type StateFlag uint32
+
+const (
+	FlagCaller StateFlag = 1 << iota // Enable caller location reporting
+	FlagTrace                        // Enable stack trace reporting for ERROR and above
+)
+
 // DefaultKeySeparator is the default separator for group key prefixes.
 const DefaultKeySeparator = "_"
 
@@ -103,32 +111,57 @@ func WithTrace(enabled bool) BaseOption {
 // Handlers that embed BaseHandler can use its optional helpers or ignore them
 // in favor of their own optimized implementations.
 //
+// All methods are thread-safe. Handlers should cache flag states at init
+// for lock-free hot-path performance.
+//
+// Concurrency Model:
+//
+// BaseHandler uses two synchronization primitives:
+//  1. sync.RWMutex (mu) protects format, callerSkip, keyPrefix, separator
+//  2. atomic.Uint32/Int32 for flags and level (lock-free reads)
+//
+// Design rationale:
+//   - Logging (hot path) requires lock-free flag checks
+//   - Configuration changes (cold path) can tolerate mutex overhead
+//   - Handlers should cache flag states at init for zero-lock logging
+//
+// Mutability semantics:
+//   - Set* methods mutate in-place (affect shared state)
+//   - With* methods return new instances (immutable pattern)
+//   - Clone() creates independent copy with separate mutex
+//
+// Example handler optimization:
+//
+//	type myHandler struct {
+//	    base        *BaseHandler
+//	    needsCaller bool // Cached at init
+//	}
+//	func (h *myHandler) Handle(...) {
+//	    if h.needsCaller { /* no lock */ }
+//	}
+//
 // State Management:
 //   - Shared state: level, output, format (modified via Set* methods)
 //   - Independent state: keyPrefix, callerSkip (cloned via With* methods)
-//
-// Setters (SetLevel, SetOutput) affect all clones sharing this handler.
-// Builders (WithKeyPrefix, Clone) return new instances with independent state.
 //
 // Caller Detection:
 //   - Handlers needing source location should use [github.com/balinomad/go-caller].
 //   - See [github.com/balinomad/go-unilog/handler/stdlog] for an example.
 type BaseHandler struct {
+	mu         sync.RWMutex  // Protects format, callerSkip, keyPrefix, separator
+	flags      atomic.Uint32 // StateFlag bitmask (lock-free)
+	level      atomic.Int32  // LogLevel (lock-free for Enabled())
 	out        *atomicwriter.AtomicWriter
-	level      atomic.Int32
-	format     string
-	withCaller bool
-	withTrace  bool
 	callerSkip int
+	format     string
 	keyPrefix  string
 	separator  string
-	mu         sync.RWMutex // Protects all fields below
 }
 
 // Ensure BaseHandler implements HandlerState
 var _ HandlerState = (*BaseHandler)(nil)
 
-// NewBaseHandler initializes shared resources.
+// NewBaseHandler initializes a new BaseHandler.
 func NewBaseHandler(opts *BaseOptions) (*BaseHandler, error) {
 	if opts.Output == nil {
 		return nil, NewAtomicWriterError(errors.New("output writer is required"))
@@ -158,24 +191,29 @@ func NewBaseHandler(opts *BaseOptions) (*BaseHandler, error) {
 	h := &BaseHandler{
 		out:        aw,
 		format:     opts.Format,
-		withCaller: opts.WithCaller,
-		withTrace:  opts.WithTrace,
 		callerSkip: opts.CallerSkip,
 		separator:  separator,
 	}
 	h.level.Store(int32(opts.Level))
 
+	// Initialize flags
+	var flags uint32
+	if opts.WithCaller {
+		flags |= uint32(FlagCaller)
+	}
+	if opts.WithTrace {
+		flags |= uint32(FlagTrace)
+	}
+	h.flags.Store(flags)
+
 	return h, nil
 }
+
+// --- Thread-Safe State Access ---
 
 // Enabled reports whether the handler processes records at the given level.
 func (h *BaseHandler) Enabled(level LogLevel) bool {
 	return level >= LogLevel(h.level.Load())
-}
-
-// HandlerState returns an immutable HandlerState that exposes handler state.
-func (h *BaseHandler) HandlerState() HandlerState {
-	return h
 }
 
 // Level returns the current minimum log level.
@@ -185,23 +223,20 @@ func (h *BaseHandler) Level() LogLevel {
 
 // Format returns the configured format string.
 func (h *BaseHandler) Format() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
 	return h.format
 }
 
 // CallerEnabled returns whether caller information should be included.
 func (h *BaseHandler) CallerEnabled() bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	return h.withCaller
+	return h.HasFlag(FlagCaller)
 }
 
 // TraceEnabled returns whether stack traces should be included for error-level logs.
 func (h *BaseHandler) TraceEnabled() bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	return h.withTrace
+	return h.HasFlag(FlagTrace)
 }
 
 // CallerSkip returns the number of stack frames to skip for caller reporting.
@@ -239,61 +274,41 @@ func (h *BaseHandler) AtomicWriter() *atomicwriter.AtomicWriter {
 	return h.out
 }
 
-// WithKeyPrefix returns a copy of BaseHandler with the given prefix applied.
-// This supports WithGroup for handlers without native prefix support.
-func (h *BaseHandler) WithKeyPrefix(prefix string) *BaseHandler {
-	clone := h.Clone()
-	if clone.keyPrefix == "" {
-		clone.keyPrefix = prefix
-	} else {
-		clone.keyPrefix = clone.keyPrefix + clone.separator + prefix
-	}
-	return clone
+// HandlerState returns this BaseHandler as a HandlerState.
+// Methods on the returned interface are thread-safe snapshots.
+// State may change between calls.
+func (h *BaseHandler) HandlerState() HandlerState {
+	return h
 }
 
-// WithCallerSkip returns a new handler with updated caller skip.
-func (h *BaseHandler) WithCallerSkip(skip int) (*BaseHandler, error) {
-	if skip < 0 {
-		return nil, ErrInvalidSourceSkip
-	}
+// --- Flag Management (Lock-Free) ---
 
-	clone := h.Clone()
-	clone.callerSkip = skip
-
-	return clone, nil
+// HasFlag checks if flag is set (lock-free).
+func (h *BaseHandler) HasFlag(flag StateFlag) bool {
+	return h.flags.Load()&uint32(flag) != 0
 }
 
-// WithCallerSkipDelta returns a new handler with caller skip adjusted by delta.
-func (h *BaseHandler) WithCallerSkipDelta(delta int) (*BaseHandler, error) {
-	skip := h.callerSkip + delta
-	if skip < 0 {
-		return nil, ErrInvalidSourceSkip
+// SetFlag atomically sets or clears a flag.
+// Affects all instances sharing this base.
+func (h *BaseHandler) SetFlag(flag StateFlag, enabled bool) {
+	for {
+		old := h.flags.Load()
+		new := old
+		if enabled {
+			new |= uint32(flag)
+		} else {
+			new &^= uint32(flag)
+		}
+		if h.flags.CompareAndSwap(old, new) {
+			return
+		}
 	}
-
-	return h.WithCallerSkip(skip)
 }
 
-// Clone returns a shallow copy of BaseHandler for use in handler cloning.
-// When a handler embeds BaseHandler, it should call this in its own Clone method.
-func (h *BaseHandler) Clone() *BaseHandler {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	clone := &BaseHandler{
-		out:        h.out,
-		format:     h.format,
-		withCaller: h.withCaller,
-		withTrace:  h.withTrace,
-		callerSkip: h.callerSkip,
-		keyPrefix:  h.keyPrefix,
-		separator:  h.separator,
-	}
-	clone.level.Store(h.level.Load())
-
-	return clone
-}
+// --- Mutable Setters (Affect Shared State) ---
 
 // SetLevel changes the minimum level of logs that will be processed.
+// Affects all instances sharing this base.
 func (h *BaseHandler) SetLevel(level LogLevel) error {
 	if err := ValidateLogLevel(level); err != nil {
 		return err
@@ -305,6 +320,7 @@ func (h *BaseHandler) SetLevel(level LogLevel) error {
 }
 
 // SetOutput changes the destination for log output.
+// Affects all instances sharing this base.
 func (h *BaseHandler) SetOutput(w io.Writer) error {
 	if w == nil {
 		return ErrNilWriter
@@ -318,40 +334,190 @@ func (h *BaseHandler) SetOutput(w io.Writer) error {
 }
 
 // SetCallerSkip changes the caller skip value.
-// This modifies the handler in place. Use WithCallerSkip for immutable variant.
+// Affects all instances sharing this base.
 func (h *BaseHandler) SetCallerSkip(skip int) error {
 	if skip < 0 {
 		return ErrInvalidSourceSkip
 	}
 
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	h.callerSkip = skip
+	h.mu.Unlock()
 
 	return nil
 }
 
 // SetSeparator changes the separator used for key prefixes (default: "_").
-func (h *BaseHandler) SetSeparator(sep string) {
+// Affects all instances sharing this base.
+func (h *BaseHandler) SetSeparator(sep string) error {
+	if len(sep) > 16 {
+		return errors.New("separator too long: max 16 bytes")
+	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
-
 	h.separator = sep
+	h.mu.Unlock()
+
+	return nil
 }
 
+// --- Immutable Builders (Return New Instances) ---
+
+// Clone returns a shallow copy of BaseHandler with independent mutex.
+// The new instance shares the AtomicWriter but has separate state locks.
+func (h *BaseHandler) Clone() *BaseHandler {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	clone := &BaseHandler{
+		out:        h.out,
+		format:     h.format,
+		callerSkip: h.callerSkip,
+		keyPrefix:  h.keyPrefix,
+		separator:  h.separator,
+	}
+	clone.level.Store(h.level.Load())
+	clone.flags.Store(h.flags.Load())
+
+	return clone
+}
+
+// WithLevel returns a shallow copy of BaseHandler with level set.
+// If the level is already set, returns the original instance.
+func (h *BaseHandler) WithLevel(level LogLevel) (*BaseHandler, error) {
+	if err := ValidateLogLevel(level); err != nil {
+		return nil, err
+	}
+
+	if LogLevel(h.level.Load()) == level {
+		return h, nil
+	}
+
+	clone := h.Clone()
+	clone.level.Store(int32(level))
+
+	return clone, nil
+}
+
+// WithCaller returns a shallow copy of BaseHandler with caller flag set.
+// If the caller flag is already set, returns the original instance.
+func (h *BaseHandler) WithCaller(enabled bool) *BaseHandler {
+	if h.HasFlag(FlagCaller) == enabled {
+		return h
+	}
+
+	clone := h.Clone()
+	clone.SetFlag(FlagCaller, enabled)
+
+	return clone
+}
+
+// WithTrace returns a shallow copy of BaseHandler with trace flag set.
+// If the trace flag is already set, returns the original instance.
+func (h *BaseHandler) WithTrace(enabled bool) *BaseHandler {
+	if h.HasFlag(FlagTrace) == enabled {
+		return h
+	}
+
+	clone := h.Clone()
+	clone.SetFlag(FlagTrace, enabled)
+
+	return clone
+}
+
+// WithKeyPrefix returns a shallow copy of BaseHandler with the given prefix applied.
+// This supports WithGroup for handlers without native prefix support.
+func (h *BaseHandler) WithKeyPrefix(prefix string) *BaseHandler {
+	clone := h.Clone()
+
+	if clone.keyPrefix == "" {
+		clone.keyPrefix = prefix
+	} else {
+		clone.keyPrefix = clone.keyPrefix + clone.separator + prefix
+	}
+
+	return clone
+}
+
+// WithCallerSkip returns a shallow copy of BaseHandler with updated caller skip.
+// If the skip is already set, returns the original instance.
+func (h *BaseHandler) WithCallerSkip(skip int) (*BaseHandler, error) {
+	if skip < 0 {
+		return nil, ErrInvalidSourceSkip
+	}
+
+	h.mu.RLock()
+	current := h.callerSkip
+	h.mu.RUnlock()
+
+	if current == skip {
+		return h, nil
+	}
+
+	clone := h.Clone()
+	clone.callerSkip = skip
+
+	return clone, nil
+}
+
+// WithCallerSkipDelta returns a shallow copy of BaseHandler with caller skip adjusted by delta.
+// If delta is zero , returns the original instance.
+// If the new skip is negative, it returns an error.
+func (h *BaseHandler) WithCallerSkipDelta(delta int) (*BaseHandler, error) {
+	if delta == 0 {
+		return h, nil
+	}
+
+	h.mu.RLock()
+	skip := h.callerSkip + delta
+	h.mu.RUnlock()
+	if skip < 0 {
+		return nil, ErrInvalidSourceSkip
+	}
+
+	return h.WithCallerSkip(skip)
+}
+
+// WithLevel returns a new BaseHandler with output set.
+func (h *BaseHandler) WithOutput(w io.Writer) (*BaseHandler, error) {
+	if w == nil {
+		return nil, ErrNilWriter
+	}
+
+	aw, err := atomicwriter.NewAtomicWriter(w)
+	if err != nil {
+		return nil, NewAtomicWriterError(err)
+	}
+
+	clone := h.Clone()
+	clone.out = aw
+
+	return clone, nil
+}
+
+// --- Utility ---
+
 // ApplyPrefix applies the current key prefix to a key string.
-// Only use this if your handler lacks native group prefix support.
-// Handlers with native support (zap, logrus, log15, slog) should ignore this.
+// Only use if handler lacks native group prefix support.
+// Handlers with native support (zap, slog, etc.) should ignore this.
 //
 // Performance note: This implementation is optimized for the common case
 // where no prefix exists. See docs/HANDLERS.md for benchmark comparisons.
 func (h *BaseHandler) ApplyPrefix(key string) string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	prefix := h.keyPrefix
+	separator := h.separator
+	h.mu.RUnlock()
 
-	if h.keyPrefix == "" {
+	if prefix == "" {
 		return key
 	}
-	return h.keyPrefix + h.separator + key
+	return prefix + separator + key
+}
+
+// ReadState executes fn while holding read lock.
+// Use for atomic multi-field reads (avoid in hot path; cache instead).
+func (h *BaseHandler) ReadState(fn func()) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	fn()
 }

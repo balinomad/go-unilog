@@ -30,6 +30,9 @@ type Handler interface {
 
 	// HandlerState returns an immutable HandlerState that exposes handler state.
 	HandlerState() HandlerState
+
+	// Features returns the handler's supported features.
+	Features() HandlerFeatures
 }
 
 // Chainer extends Handler with methods for chaining log attributes.
