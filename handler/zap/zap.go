@@ -2,9 +2,9 @@ package zap
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
-	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -58,7 +58,6 @@ func WithTrace(enabled bool) ZapOption {
 
 // zapHandler is a wrapper around Zap's logger.
 type zapHandler struct {
-	mu             sync.RWMutex
 	base           *handler.BaseHandler
 	logger         *zap.Logger
 	atomicLevel    zap.AtomicLevel
@@ -174,15 +173,11 @@ func (h *zapHandler) Handle(ctx context.Context, r *handler.Record) error {
 		return nil
 	}
 
-	base := h.base
 	zl := h.logger
 
 	// Apply per-record dynamic skip
-	if base.CallerEnabled() {
-		skip := max(r.Skip, 0)
-		if skip > 0 {
-			zl = zl.WithOptions(zap.AddCallerSkip(max(r.Skip, 0)))
-		}
+	if h.withCaller && r.Skip > 0 {
+		zl = zl.WithOptions(zap.AddCallerSkip(r.Skip))
 	}
 
 	ce := zl.Check(levelMapper.Map(r.Level), r.Message)
@@ -224,8 +219,15 @@ func (h *zapHandler) WithAttrs(keyValues []any) handler.Chainer {
 	}
 
 	return &zapHandler{
-		base:   h.base,
-		logger: h.logger.With(fields...),
+		base:           h.base,
+		logger:         h.logger.With(fields...),
+		atomicLevel:    h.atomicLevel, // Shared (mutable by design)
+		encoderFactory: h.encoderFactory,
+		writeSyncer:    h.writeSyncer,
+		zapOpts:        h.zapOpts, // Shared (immutable after init)
+		withCaller:     h.withCaller,
+		withTrace:      h.withTrace,
+		callerSkip:     h.callerSkip,
 	}
 }
 
@@ -236,21 +238,33 @@ func (h *zapHandler) WithGroup(name string) handler.Chainer {
 	}
 
 	return &zapHandler{
-		base:        h.base.WithKeyPrefix(name),
-		logger:      h.logger.With(zap.Namespace(name)),
-		atomicLevel: zap.NewAtomicLevelAt(h.atomicLevel.Level()),
+		base:           h.base,
+		logger:         h.logger.With(zap.Namespace(name)),
+		atomicLevel:    h.atomicLevel,
+		encoderFactory: h.encoderFactory,
+		writeSyncer:    h.writeSyncer,
+		zapOpts:        h.zapOpts,
+		withCaller:     h.withCaller,
+		withTrace:      h.withTrace,
+		callerSkip:     h.callerSkip,
 	}
 }
 
 // SetLevel dynamically changes the minimum level of logs that will be processed.
 func (h *zapHandler) SetLevel(level handler.LogLevel) error {
-	// Validate and store in base (atomic store inside BaseHandler)
-	if err := h.base.SetLevel(level); err != nil {
+	if err := handler.ValidateLogLevel(level); err != nil {
 		return err
 	}
 
-	// Reflect the authoritative base level into zap's atomic level
-	h.atomicLevel.SetLevel(levelMapper.Map(h.base.Level()))
+	// Update zap first (fail-safe: if base update fails, we can rollback)
+	h.atomicLevel.SetLevel(levelMapper.Map(level))
+
+	// Validate and store in base
+	if err := h.base.SetLevel(level); err != nil {
+		// Rollback zap level on error
+		h.atomicLevel.SetLevel(levelMapper.Map(h.base.Level()))
+		return err
+	}
 
 	return nil
 }
@@ -271,10 +285,29 @@ func (h *zapHandler) WithCaller(enabled bool) handler.AdvancedHandler {
 		return h
 	}
 
+	// Rebuild zapOpts with new caller state
+	newZapOpts := make([]zap.Option, 0, 2)
+	if enabled {
+		newZapOpts = append(newZapOpts,
+			zap.AddCaller(),
+			zap.AddCallerSkip(newBase.CallerSkip()))
+	}
+	if newBase.TraceEnabled() {
+		newZapOpts = append(newZapOpts, zap.AddStacktrace(zapcore.ErrorLevel))
+	}
+
 	return &zapHandler{
-		base:        newBase,
-		logger:      h.logger.WithOptions(zap.WithCaller(enabled)),
-		atomicLevel: zap.NewAtomicLevelAt(h.atomicLevel.Level()),
+		base: newBase,
+		logger: zap.New(
+			zapcore.NewCore(h.encoderFactory(), h.writeSyncer, h.atomicLevel),
+			newZapOpts...),
+		atomicLevel:    h.atomicLevel,
+		encoderFactory: h.encoderFactory,
+		writeSyncer:    h.writeSyncer,
+		zapOpts:        newZapOpts,
+		withCaller:     enabled,
+		withTrace:      h.withTrace,
+		callerSkip:     newBase.CallerSkip(),
 	}
 }
 
@@ -287,10 +320,29 @@ func (h *zapHandler) WithTrace(enabled bool) handler.AdvancedHandler {
 		return h
 	}
 
+	// Rebuild zapOpts with new trace state
+	newZapOpts := make([]zap.Option, 0, 2)
+	if newBase.CallerEnabled() {
+		newZapOpts = append(newZapOpts,
+			zap.AddCaller(),
+			zap.AddCallerSkip(newBase.CallerSkip()))
+	}
+	if enabled {
+		newZapOpts = append(newZapOpts, zap.AddStacktrace(zapcore.ErrorLevel))
+	}
+
 	return &zapHandler{
-		base:        newBase,
-		logger:      h.logger.WithOptions(zap.AddStacktrace(zapcore.ErrorLevel)),
-		atomicLevel: zap.NewAtomicLevelAt(h.atomicLevel.Level()),
+		base: newBase,
+		logger: zap.New(
+			zapcore.NewCore(h.encoderFactory(), h.writeSyncer, h.atomicLevel),
+			newZapOpts...),
+		atomicLevel:    h.atomicLevel,
+		encoderFactory: h.encoderFactory,
+		writeSyncer:    h.writeSyncer,
+		zapOpts:        newZapOpts,
+		withCaller:     h.withCaller,
+		withTrace:      enabled,
+		callerSkip:     h.callerSkip,
 	}
 }
 
@@ -303,23 +355,25 @@ func (h *zapHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler {
 	}
 
 	newLevel := zap.NewAtomicLevelAt(levelMapper.Map(level))
+	newZapOpts := make([]zap.Option, len(h.zapOpts))
+	copy(newZapOpts, h.zapOpts)
 
 	return &zapHandler{
 		base: newBase,
 		logger: zap.New(
 			zapcore.NewCore(h.encoderFactory(), h.writeSyncer, newLevel),
-			h.zapOpts...),
+			newZapOpts...),
 		atomicLevel:    newLevel,
 		encoderFactory: h.encoderFactory,
 		writeSyncer:    h.writeSyncer,
-		zapOpts:        h.zapOpts,
+		zapOpts:        newZapOpts,
+		withCaller:     h.withCaller,
+		withTrace:      h.withTrace,
+		callerSkip:     h.callerSkip,
 	}
 }
 
 func (h *zapHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
 	_ = h.logger.Sync()
 
 	newBase, err := h.base.WithOutput(w)
@@ -328,16 +382,22 @@ func (h *zapHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
 	}
 
 	newWriteSyncer := zapcore.AddSync(newBase.AtomicWriter())
+	newAtomicLevel := zap.NewAtomicLevelAt(h.atomicLevel.Level())
+	newZapOpts := make([]zap.Option, len(h.zapOpts))
+	copy(newZapOpts, h.zapOpts)
 
 	return &zapHandler{
 		base: newBase,
 		logger: zap.New(
-			zapcore.NewCore(h.encoderFactory(), newWriteSyncer, h.atomicLevel),
-			h.zapOpts...),
-		atomicLevel:    h.atomicLevel,
+			zapcore.NewCore(h.encoderFactory(), newWriteSyncer, newAtomicLevel),
+			newZapOpts...),
+		atomicLevel:    newAtomicLevel,
 		encoderFactory: h.encoderFactory,
 		writeSyncer:    newWriteSyncer,
-		zapOpts:        h.zapOpts,
+		zapOpts:        newZapOpts,
+		withCaller:     h.withCaller,
+		withTrace:      h.withTrace,
+		callerSkip:     h.callerSkip,
 	}
 }
 
@@ -362,9 +422,15 @@ func (h *zapHandler) WithCallerSkipDelta(delta int) handler.AdvancedHandler {
 	}
 
 	return &zapHandler{
-		base:        baseClone,
-		logger:      h.logger.WithOptions(zap.AddCallerSkip(delta)),
-		atomicLevel: zap.NewAtomicLevelAt(h.atomicLevel.Level()),
+		base:           baseClone,
+		logger:         h.logger.WithOptions(zap.AddCallerSkip(delta)),
+		atomicLevel:    h.atomicLevel,
+		encoderFactory: h.encoderFactory,
+		writeSyncer:    h.writeSyncer,
+		zapOpts:        h.zapOpts,
+		withCaller:     h.withCaller,
+		withTrace:      h.withTrace,
+		callerSkip:     baseClone.CallerSkip(),
 	}
 }
 
@@ -384,18 +450,12 @@ func (h *zapHandler) keyValuesToZapFields(keyValues []any) []zap.Field {
 
 	fields := make([]zap.Field, 0, fieldCount)
 
-	// Compute prefix once
-	prefix := ""
-	if p := h.base.KeyPrefix(); p != "" {
-		prefix = p + h.base.Separator()
-	}
-
 	for i := 0; i < n-1; i += 2 {
 		key, ok := keyValues[i].(string)
 		if !ok {
-			continue
+			key = fmt.Sprint(keyValues[i])
 		}
-		fields = append(fields, attrToZapField(prefix+key, keyValues[i+1]))
+		fields = append(fields, attrToZapField(key, keyValues[i+1]))
 	}
 
 	return fields
@@ -433,8 +493,10 @@ func attrToZapField(key string, v any) zap.Field {
 		return zap.ByteString(key, vv)
 	case time.Time:
 		return zap.Time(key, vv)
+	case time.Duration:
+		return zap.Duration(key, vv)
 	case error:
-		return zap.Error(vv)
+		return zap.NamedError(key, vv)
 	default:
 		return zap.Any(key, vv)
 	}
