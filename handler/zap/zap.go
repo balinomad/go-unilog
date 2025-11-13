@@ -156,7 +156,7 @@ func New(opts ...ZapOption) (handler.Handler, error) {
 	}, nil
 }
 
-// LHandleog implements the handler.Handler interface for zap.
+// Handle implements the handler.Handler interface for zap.
 func (h *zapHandler) Handle(ctx context.Context, r *handler.Record) error {
 	if !h.Enabled(r.Level) {
 		return nil
@@ -165,7 +165,7 @@ func (h *zapHandler) Handle(ctx context.Context, r *handler.Record) error {
 	zl := h.logger
 
 	// Apply per-record dynamic skip
-	if h.withCaller && r.Skip > 0 {
+	if h.withCaller && r.Skip != 0 {
 		zl = zl.WithOptions(zap.AddCallerSkip(r.Skip))
 	}
 
@@ -199,44 +199,30 @@ func (h *zapHandler) Features() handler.HandlerFeatures {
 			handler.FeatDynamicOutput) // handler.BaseHandler.AtomicWriter
 }
 
-// WithAttrs returns a new logger with the provided keyValues added to the context.
-// If keyValues is empty, the original logger is returned.
+// WithAttrs returns a child handler with the provided keyValues added to the context.
+// If keyValues is empty, the original handler is returned.
 func (h *zapHandler) WithAttrs(keyValues []any) handler.Chainer {
 	fields := h.keyValuesToZapFields(keyValues)
 	if len(fields) == 0 {
 		return h
 	}
 
-	return &zapHandler{
-		base:           h.base,
-		logger:         h.logger.With(fields...),
-		atomicLevel:    h.atomicLevel, // Shared (mutable by design)
-		encoderFactory: h.encoderFactory,
-		writeSyncer:    h.writeSyncer,
-		zapOpts:        h.zapOpts, // Shared (immutable after init)
-		withCaller:     h.withCaller,
-		withTrace:      h.withTrace,
-		callerSkip:     h.callerSkip,
-	}
+	clone := h.clone()
+	clone.logger = h.logger.With(fields...)
+
+	return clone
 }
 
-// WithGroup returns a Logger that starts a group, if name is non-empty.
+// WithGroup returns a handler that starts a group, if name is non-empty.
 func (h *zapHandler) WithGroup(name string) handler.Chainer {
 	if name == "" {
 		return h
 	}
 
-	return &zapHandler{
-		base:           h.base,
-		logger:         h.logger.With(zap.Namespace(name)),
-		atomicLevel:    h.atomicLevel,
-		encoderFactory: h.encoderFactory,
-		writeSyncer:    h.writeSyncer,
-		zapOpts:        h.zapOpts,
-		withCaller:     h.withCaller,
-		withTrace:      h.withTrace,
-		callerSkip:     h.callerSkip,
-	}
+	clone := h.clone()
+	clone.logger = h.logger.With(zap.Namespace(name))
+
+	return clone
 }
 
 // SetLevel dynamically changes the minimum level of logs that will be processed.
@@ -268,6 +254,8 @@ func (h *zapHandler) CallerSkip() int {
 	return h.base.CallerSkip()
 }
 
+// WithCaller returns a new handler with caller reporting enabled or disabled.
+// It returns the original handler if the enabled value is unchanged.
 func (h *zapHandler) WithCaller(enabled bool) handler.AdvancedHandler {
 	newBase := h.base.WithCaller(enabled)
 	if newBase == h.base {
@@ -277,24 +265,18 @@ func (h *zapHandler) WithCaller(enabled bool) handler.AdvancedHandler {
 	// Rebuild zapOpts with new caller state
 	newZapOpts := buildZapOpts(newBase)
 
-	return &zapHandler{
-		base: newBase,
-		logger: zap.New(
-			zapcore.NewCore(h.encoderFactory(), h.writeSyncer, h.atomicLevel),
-			newZapOpts...),
-		atomicLevel:    h.atomicLevel,
-		encoderFactory: h.encoderFactory,
-		writeSyncer:    h.writeSyncer,
-		zapOpts:        newZapOpts,
-		withCaller:     enabled,
-		withTrace:      h.withTrace,
-		callerSkip:     newBase.CallerSkip(),
-	}
+	clone := h.clone()
+	clone.base = newBase
+	clone.logger = zap.New(zapcore.NewCore(h.encoderFactory(), h.writeSyncer, h.atomicLevel), newZapOpts...)
+	clone.zapOpts = newZapOpts
+	clone.withCaller = enabled
+	clone.callerSkip = newBase.CallerSkip()
+
+	return clone
 }
 
-// WithTrace returns a new AdvancedHandler that enables or disables trace logging.
-// It returns the original logger if the enabled value is unchanged.
-// By default, trace logging is disabled.
+// WithTrace returns a new handler that enables or disables stack trace logging for error-level logs.
+// It returns the original handler if the enabled value is unchanged.
 func (h *zapHandler) WithTrace(enabled bool) handler.AdvancedHandler {
 	newBase := h.base.WithTrace(enabled)
 	if newBase == h.base {
@@ -304,19 +286,13 @@ func (h *zapHandler) WithTrace(enabled bool) handler.AdvancedHandler {
 	// Rebuild zapOpts with new trace state
 	newZapOpts := buildZapOpts(newBase)
 
-	return &zapHandler{
-		base: newBase,
-		logger: zap.New(
-			zapcore.NewCore(h.encoderFactory(), h.writeSyncer, h.atomicLevel),
-			newZapOpts...),
-		atomicLevel:    h.atomicLevel,
-		encoderFactory: h.encoderFactory,
-		writeSyncer:    h.writeSyncer,
-		zapOpts:        newZapOpts,
-		withCaller:     h.withCaller,
-		withTrace:      enabled,
-		callerSkip:     h.callerSkip,
-	}
+	clone := h.clone()
+	clone.base = newBase
+	clone.logger = zap.New(zapcore.NewCore(h.encoderFactory(), h.writeSyncer, h.atomicLevel), newZapOpts...)
+	clone.zapOpts = newZapOpts
+	clone.withCaller = enabled
+
+	return clone
 }
 
 // WithLevel returns a new Zap handler with a new minimum level applied.
@@ -412,6 +388,21 @@ func (h *zapHandler) Sync() error {
 	return h.logger.Sync()
 }
 
+// clone returns a shallow copy for immutable chaining.
+func (h *zapHandler) clone() *zapHandler {
+	return &zapHandler{
+		base:           h.base,
+		logger:         h.logger,
+		atomicLevel:    h.atomicLevel,
+		encoderFactory: h.encoderFactory,
+		writeSyncer:    h.writeSyncer,
+		zapOpts:        h.zapOpts,
+		withCaller:     h.withCaller,
+		withTrace:      h.withTrace,
+		callerSkip:     h.callerSkip,
+	}
+}
+
 // buildZapOpts creates zap.Option slice from BaseHandler state.
 func buildZapOpts(base *handler.BaseHandler) []zap.Option {
 	opts := make([]zap.Option, 0, 2)
@@ -435,7 +426,14 @@ func (h *zapHandler) keyValuesToZapFields(keyValues []any) []zap.Field {
 		return nil
 	}
 
-	fields := make([]zap.Field, 0, fieldCount)
+	// Stack-allocate for common case (≤4 fields)
+	var stackFields [4]zap.Field
+	var fields []zap.Field
+	if fieldCount <= 4 {
+		fields = stackFields[:0]
+	} else {
+		fields = make([]zap.Field, 0, fieldCount)
+	}
 
 	for i := 0; i < n-1; i += 2 {
 		key, ok := keyValues[i].(string)
