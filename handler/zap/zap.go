@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -11,14 +12,6 @@ import (
 
 	"github.com/balinomad/go-unilog/handler"
 )
-
-// internalSkipFrames is the number of stack frames this handler adds
-// between zapHandler.Handle() and the backend logger call.
-//
-// Frames to skip:
-//
-//	1:  zapHandler.Handle()
-const internalSkipFrames = 1
 
 // validFormats is the list of supported output formats.
 var validFormats = []string{"json", "console"}
@@ -45,17 +38,14 @@ func WithOutput(w io.Writer) ZapOption {
 	}
 }
 
-// WithCaller enables source location reporting.
-// The optional skip parameter adjusts the reported call site by skipping
-// additional stack frames beyond the handler's internal frames.
-//
-// Example:
-//
-//	handler := New(WithCaller(true))        // Reports actual call site
-//	handler := New(WithCaller(true, 1))     // Skip 1 frame (for wrapper)
-func WithCaller(enabled bool, skip ...int) ZapOption {
+// WithCaller enables or disables source location reporting.
+// If enabled, the handler will include the source location
+// of the log call site in the log record.
+// This can be useful for debugging, but may incur a performance hit
+// due to the additional stack frame analysis. The default value is false.
+func WithCaller(enabled bool) ZapOption {
 	return func(o *zapOptions) error {
-		return handler.WithCaller(enabled, skip...)(o.base)
+		return handler.WithCaller(enabled)(o.base)
 	}
 }
 
@@ -68,17 +58,22 @@ func WithTrace(enabled bool) ZapOption {
 
 // zapHandler is a wrapper around Zap's logger.
 type zapHandler struct {
-	base        *handler.BaseHandler
-	logger      *zap.Logger
-	atomicLevel zap.AtomicLevel
+	mu             sync.RWMutex
+	base           *handler.BaseHandler
+	logger         *zap.Logger
+	atomicLevel    zap.AtomicLevel
+	encoderFactory func() zapcore.Encoder
+	writeSyncer    zapcore.WriteSyncer
+	zapOpts        []zap.Option
 }
 
 // Ensure zapHandler implements the following interfaces.
 var (
-	_ handler.Handler      = (*zapHandler)(nil)
-	_ handler.Chainer      = (*zapHandler)(nil)
-	_ handler.Configurator = (*zapHandler)(nil)
-	_ handler.Syncer       = (*zapHandler)(nil)
+	_ handler.Handler         = (*zapHandler)(nil)
+	_ handler.Chainer         = (*zapHandler)(nil)
+	_ handler.AdvancedHandler = (*zapHandler)(nil)
+	_ handler.Configurator    = (*zapHandler)(nil)
+	_ handler.Syncer          = (*zapHandler)(nil)
 )
 
 // levelMapper maps unilog log levels to zap log levels.
@@ -94,6 +89,8 @@ var levelMapper = handler.NewLevelMapper(
 )
 
 // New creates a new handler.Handler instance backed by zap.
+// It also captures enough internal pieces to be able to recreate/clone
+// the embedded zap.Logger later with a different set of options.
 func New(opts ...ZapOption) (handler.Handler, error) {
 	o := &zapOptions{
 		base: &handler.BaseOptions{
@@ -109,28 +106,38 @@ func New(opts ...ZapOption) (handler.Handler, error) {
 			return nil, err
 		}
 	}
-	o.base.CallerSkip += internalSkipFrames
 
 	base, err := handler.NewBaseHandler(o.base)
 	if err != nil {
 		return nil, err
 	}
 
+	// Create the write syncer once and keep it for future clones
 	writeSyncer := zapcore.AddSync(base.AtomicWriter())
-	atomicLevel := zap.NewAtomicLevelAt(levelMapper.Map(base.Level()))
 
+	// Create the initial atomic level and keep a value copy
+	initialLevel := zap.NewAtomicLevelAt(levelMapper.Map(base.Level()))
+
+	// Build encoder config
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	var encoder zapcore.Encoder
+
+	// Create an encoderFactory so we can reproduce the same encoder later
+	var encoderFactory func() zapcore.Encoder
 	if base.Format() == "console" {
-		encoder = zapcore.NewConsoleEncoder(encoderConfig)
+		encoderFactory = func() zapcore.Encoder {
+			return zapcore.NewConsoleEncoder(encoderConfig)
+		}
 	} else {
-		encoder = zapcore.NewJSONEncoder(encoderConfig)
+		encoderFactory = func() zapcore.Encoder {
+			return zapcore.NewJSONEncoder(encoderConfig)
+		}
 	}
 
-	core := zapcore.NewCore(encoder, writeSyncer, atomicLevel)
+	// Build initial core
+	core := zapcore.NewCore(encoderFactory(), writeSyncer, initialLevel)
 
-	// Build zap options natively
+	// Build zap options natively and capture them for future clones
 	zapOpts := make([]zap.Option, 0, 2)
 	if base.CallerEnabled() {
 		// AddCallerSkip needs to account for our adapter's internal frames
@@ -144,9 +151,12 @@ func New(opts ...ZapOption) (handler.Handler, error) {
 	zl := zap.New(core, zapOpts...)
 
 	return &zapHandler{
-		base:        base,
-		logger:      zl,
-		atomicLevel: atomicLevel,
+		base:           base,
+		logger:         zl,
+		atomicLevel:    initialLevel,
+		encoderFactory: encoderFactory,
+		writeSyncer:    writeSyncer,
+		zapOpts:        zapOpts,
 	}, nil
 }
 
@@ -172,7 +182,7 @@ func (h *zapHandler) Handle(ctx context.Context, r *handler.Record) error {
 		return nil
 	}
 
-	ce.Write(h.attrsToZapFields(r.Attrs)...)
+	ce.Write(h.keyValuesToZapFields(r.KeyValues)...)
 
 	return nil
 }
@@ -182,21 +192,38 @@ func (h *zapHandler) Enabled(level handler.LogLevel) bool {
 	return h.base.Enabled(level)
 }
 
+// Base returns the underlying BaseHandler.
+func (h *zapHandler) HandlerState() handler.HandlerState {
+	return h.base
+}
+
+// Features returns the supported HandlerFeatures.
+func (h *zapHandler) Features() handler.HandlerFeatures {
+	return handler.NewHandlerFeatures(
+		handler.FeatNativeCaller |
+			handler.FeatNativeGroup |
+			handler.FeatBufferedOutput |
+			handler.FeatContextPropagation |
+			handler.FeatDynamicLevel |
+			handler.FeatDynamicOutput)
+}
+
 // WithAttrs returns a new logger with the provided keyValues added to the context.
-func (h *zapHandler) WithAttrs(attrs []handler.Attr) handler.Handler {
-	if len(attrs) == 0 {
+// If keyValues is empty, the original logger is returned.
+func (h *zapHandler) WithAttrs(keyValues []any) handler.Chainer {
+	fields := h.keyValuesToZapFields(keyValues)
+	if len(fields) == 0 {
 		return h
 	}
 
 	return &zapHandler{
-		base:        h.base,
-		logger:      h.logger.With(h.attrsToZapFields(attrs)...),
-		atomicLevel: h.atomicLevel,
+		base:   h.base,
+		logger: h.logger.With(fields...),
 	}
 }
 
 // WithGroup returns a Logger that starts a group, if name is non-empty.
-func (h *zapHandler) WithGroup(name string) handler.Handler {
+func (h *zapHandler) WithGroup(name string) handler.Chainer {
 	if name == "" {
 		return h
 	}
@@ -204,7 +231,7 @@ func (h *zapHandler) WithGroup(name string) handler.Handler {
 	return &zapHandler{
 		base:        h.base.WithKeyPrefix(name),
 		logger:      h.logger.With(zap.Namespace(name)),
-		atomicLevel: h.atomicLevel,
+		atomicLevel: zap.NewAtomicLevelAt(h.atomicLevel.Level()),
 	}
 }
 
@@ -231,31 +258,107 @@ func (h *zapHandler) CallerSkip() int {
 	return h.base.CallerSkip()
 }
 
+func (h *zapHandler) WithCaller(enabled bool) handler.AdvancedHandler {
+	newBase := h.base.WithCaller(enabled)
+	if newBase == h.base {
+		return h
+	}
+
+	return &zapHandler{
+		base:        newBase,
+		logger:      h.logger.WithOptions(zap.WithCaller(enabled)),
+		atomicLevel: zap.NewAtomicLevelAt(h.atomicLevel.Level()),
+	}
+}
+
+// WithTrace returns a new AdvancedHandler that enables or disables trace logging.
+// It returns the original logger if the enabled value is unchanged.
+// By default, trace logging is disabled.
+func (h *zapHandler) WithTrace(enabled bool) handler.AdvancedHandler {
+	newBase := h.base.WithTrace(enabled)
+	if newBase == h.base {
+		return h
+	}
+
+	return &zapHandler{
+		base:        newBase,
+		logger:      h.logger.WithOptions(zap.AddStacktrace(zapcore.ErrorLevel)),
+		atomicLevel: zap.NewAtomicLevelAt(h.atomicLevel.Level()),
+	}
+}
+
+// WithLevel returns a new Zap handler with a new minimum level applied.
+// It returns the original handler if the level value is unchanged.
+func (h *zapHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler {
+	newBase, err := h.base.WithLevel(level)
+	if err != nil || newBase == h.base {
+		return h
+	}
+
+	newLevel := zap.NewAtomicLevelAt(levelMapper.Map(level))
+
+	return &zapHandler{
+		base: newBase,
+		logger: zap.New(
+			zapcore.NewCore(h.encoderFactory(), h.writeSyncer, newLevel),
+			h.zapOpts...),
+		atomicLevel:    newLevel,
+		encoderFactory: h.encoderFactory,
+		writeSyncer:    h.writeSyncer,
+		zapOpts:        h.zapOpts,
+	}
+}
+
+func (h *zapHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	_ = h.logger.Sync()
+
+	newBase, err := h.base.WithOutput(w)
+	if err != nil || newBase == h.base {
+		return h
+	}
+
+	newWriteSyncer := zapcore.AddSync(newBase.AtomicWriter())
+
+	return &zapHandler{
+		base: newBase,
+		logger: zap.New(
+			zapcore.NewCore(h.encoderFactory(), newWriteSyncer, h.atomicLevel),
+			h.zapOpts...),
+		atomicLevel:    h.atomicLevel,
+		encoderFactory: h.encoderFactory,
+		writeSyncer:    newWriteSyncer,
+		zapOpts:        h.zapOpts,
+	}
+}
+
 // WithCallerSkip returns a new handler with the caller skip permanently adjusted.
-func (h *zapHandler) WithCallerSkip(skip int) (handler.Handler, error) {
-	current := h.base.CallerSkip() - internalSkipFrames
+func (h *zapHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
+	current := h.base.CallerSkip()
 	if skip == current {
-		return h, nil
+		return h
 	}
 	return h.WithCallerSkipDelta(skip - current)
 }
 
 // WithCallerSkipDelta returns a new handler with the caller skip permanently adjusted by delta.
-func (h *zapHandler) WithCallerSkipDelta(delta int) (handler.Handler, error) {
+func (h *zapHandler) WithCallerSkipDelta(delta int) handler.AdvancedHandler {
 	if delta == 0 {
-		return h, nil
+		return h
 	}
 
 	baseClone, err := h.base.WithCallerSkipDelta(delta)
 	if err != nil {
-		return h, err
+		return h
 	}
 
 	return &zapHandler{
 		base:        baseClone,
 		logger:      h.logger.WithOptions(zap.AddCallerSkip(delta)),
-		atomicLevel: h.atomicLevel,
-	}, nil
+		atomicLevel: zap.NewAtomicLevelAt(h.atomicLevel.Level()),
+	}
 }
 
 // Sync flushes any buffered log entries.
@@ -264,9 +367,15 @@ func (h *zapHandler) Sync() error {
 }
 
 // attrsToZapFields transforms a slice of handler.Attr into zap.Fields.
-func (h *zapHandler) attrsToZapFields(attrs []handler.Attr) []zap.Field {
-	n := len(attrs)
-	fields := make([]zap.Field, 0, n)
+func (h *zapHandler) keyValuesToZapFields(keyValues []any) []zap.Field {
+	n := len(keyValues)
+	fieldCount := n / 2
+
+	if fieldCount == 0 {
+		return nil
+	}
+
+	fields := make([]zap.Field, 0, fieldCount)
 
 	// Compute prefix once
 	prefix := ""
@@ -274,9 +383,12 @@ func (h *zapHandler) attrsToZapFields(attrs []handler.Attr) []zap.Field {
 		prefix = p + h.base.Separator()
 	}
 
-	for i := range n {
-		a := attrs[i]
-		fields = append(fields, attrToZapField(prefix+a.Key, a.Value))
+	for i := 0; i < n-1; i += 2 {
+		key, ok := keyValues[i].(string)
+		if !ok {
+			continue
+		}
+		fields = append(fields, attrToZapField(prefix+key, keyValues[i+1]))
 	}
 
 	return fields
