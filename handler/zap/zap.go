@@ -65,6 +65,11 @@ type zapHandler struct {
 	encoderFactory func() zapcore.Encoder
 	writeSyncer    zapcore.WriteSyncer
 	zapOpts        []zap.Option
+
+	// Cached from BaseHandler for lock-free hot-path
+	withCaller bool
+	withTrace  bool
+	callerSkip int
 }
 
 // Ensure zapHandler implements the following interfaces.
@@ -157,6 +162,9 @@ func New(opts ...ZapOption) (handler.Handler, error) {
 		encoderFactory: encoderFactory,
 		writeSyncer:    writeSyncer,
 		zapOpts:        zapOpts,
+		withCaller:     base.CallerEnabled(),
+		withTrace:      base.TraceEnabled(),
+		callerSkip:     base.CallerSkip(),
 	}, nil
 }
 
@@ -200,12 +208,11 @@ func (h *zapHandler) HandlerState() handler.HandlerState {
 // Features returns the supported HandlerFeatures.
 func (h *zapHandler) Features() handler.HandlerFeatures {
 	return handler.NewHandlerFeatures(
-		handler.FeatNativeCaller |
-			handler.FeatNativeGroup |
-			handler.FeatBufferedOutput |
-			handler.FeatContextPropagation |
-			handler.FeatDynamicLevel |
-			handler.FeatDynamicOutput)
+		handler.FeatNativeCaller | // zap.AddCallerSkip
+			handler.FeatNativeGroup | // zap.Namespace
+			handler.FeatBufferedOutput | // zap.Sync()
+			handler.FeatDynamicLevel | // zap.AtomicLevel
+			handler.FeatDynamicOutput) // handler.BaseHandler.AtomicWriter
 }
 
 // WithAttrs returns a new logger with the provided keyValues added to the context.

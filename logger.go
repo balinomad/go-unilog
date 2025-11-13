@@ -34,30 +34,21 @@ func newHandlerEntry(h handler.Handler) handlerEntry {
 	}
 
 	state := h.HandlerState()
+	features := h.Features()
 
 	entry := handlerEntry{
 		h:     h,
 		state: state,
 		// skip will be set by the caller
-		needsPC:   true,
-		needsSkip: false,
+		needsPC:   !features.Supports(handler.FeatNativeCaller),
+		needsSkip: features.Supports(handler.FeatNativeCaller) && state.CallerEnabled(),
 	}
 
-	// Optional interfaces
-	if adv, ok := h.(handler.AdvancedHandler); ok {
-		entry.adv = adv
-		entry.needsPC = false
-		entry.needsSkip = state != nil && state.CallerEnabled()
-	}
-	if ch, ok := h.(handler.Chainer); ok {
-		entry.ch = ch
-	}
-	if cf, ok := h.(handler.Configurator); ok {
-		entry.cf = cf
-	}
-	if snc, ok := h.(handler.Syncer); ok {
-		entry.snc = snc
-	}
+	// Cache all interface checks once
+	entry.adv, _ = h.(handler.AdvancedHandler)
+	entry.ch, _ = h.(handler.Chainer)
+	entry.cf, _ = h.(handler.Configurator)
+	entry.snc, _ = h.(handler.Syncer)
 
 	return entry
 }
@@ -134,6 +125,11 @@ var (
 
 // log logs a message at the given level.
 func (l *logger) log(ctx context.Context, level LogLevel, msg string, delta int, keyValues ...any) {
+	// Ignore disabled levels before any allocations
+	if !l.h.Enabled(level) {
+		return
+	}
+
 	// Respect context cancellation
 	if ctx != nil && ctx.Err() != nil {
 		return
@@ -141,10 +137,6 @@ func (l *logger) log(ctx context.Context, level LogLevel, msg string, delta int,
 
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-
-	if !l.h.Enabled(level) {
-		return
-	}
 
 	r := &handler.Record{
 		Time:      time.Now(),
@@ -155,11 +147,11 @@ func (l *logger) log(ctx context.Context, level LogLevel, msg string, delta int,
 
 	// Handle caller detection
 	skip := l.skip + delta
-	if l.needsPC {
+	if l.needsPC && skip > 0 {
 		// We call runtime.Caller() to determine the actual call site
 		var pcs [1]uintptr
 		// skip-1 is used because we capture the call before handler.Handle()
-		if runtime.Callers(max(skip-1, 0), pcs[:]) > 0 {
+		if runtime.Callers(skip-1, pcs[:]) > 0 {
 			r.PC = pcs[0]
 		}
 	}

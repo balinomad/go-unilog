@@ -1,3 +1,6 @@
+// Package handler is a feature normalization layer that allows any third-party logger
+// (regardless of native capabilities) to satisfy unilog's unified interface through
+// strategic backfilling of missing features.
 package handler
 
 import (

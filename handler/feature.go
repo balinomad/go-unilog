@@ -11,18 +11,31 @@ type HandlerFeatures struct {
 	features Feature
 }
 
-// Feature represents a specific feature supported by a handler.
+// Feature represents backend implementation characteristics, NOT API contracts.
+// Use interface type assertions for API detection.
+//
+// Features answer: "How does the backend work internally?"
+// Interfaces answer: "What API methods are available?"
+//
+// Example:
+//   - FeatNativeCaller: backend accepts skip parameter (zap.AddCallerSkip)
+//   - AdvancedHandler interface: exposes WithCallerSkip() method
+//
+// A handler can implement AdvancedHandler (API) without FeatNativeCaller (backend).
+// In this case, WithCallerSkip() would be emulated using runtime.Caller().
 type Feature uint32
 
 const (
 	// --- Caller reporting ---
 
-	// Uses backend's caller support (needs caller skip)
+	// FeatNativeCaller: Backend supports native caller skip (e.g., zap.AddCallerSkip).
+	// If false, unilog captures PC via runtime.Caller and passes to Record.PC.
 	FeatNativeCaller Feature = 1 << iota
 
 	// --- Group/prefix support ---
 
-	// Uses backend's group support (ignores key prefix)
+	// FeatNativeGroup: Backend supports native grouping (e.g., zap.Namespace, slog.WithGroup).
+	// If false, handler must manually prefix keys using BaseHandler.keyPrefix.
 	FeatNativeGroup
 
 	// --- Output characteristics ---
