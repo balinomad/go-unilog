@@ -138,20 +138,9 @@ func New(opts ...ZapOption) (handler.Handler, error) {
 		}
 	}
 
-	// Build initial core
+	// Build initial core and zap options
 	core := zapcore.NewCore(encoderFactory(), writeSyncer, initialLevel)
-
-	// Build zap options natively and capture them for future clones
-	zapOpts := make([]zap.Option, 0, 2)
-	if base.CallerEnabled() {
-		// AddCallerSkip needs to account for our adapter's internal frames
-		zapOpts = append(zapOpts, zap.AddCaller(), zap.AddCallerSkip(base.CallerSkip()))
-	}
-	if base.TraceEnabled() {
-		// Adds stack trace to logs at Error level and above
-		zapOpts = append(zapOpts, zap.AddStacktrace(zapcore.ErrorLevel))
-	}
-
+	zapOpts := buildZapOpts(base)
 	zl := zap.New(core, zapOpts...)
 
 	return &zapHandler{
@@ -286,15 +275,7 @@ func (h *zapHandler) WithCaller(enabled bool) handler.AdvancedHandler {
 	}
 
 	// Rebuild zapOpts with new caller state
-	newZapOpts := make([]zap.Option, 0, 2)
-	if enabled {
-		newZapOpts = append(newZapOpts,
-			zap.AddCaller(),
-			zap.AddCallerSkip(newBase.CallerSkip()))
-	}
-	if newBase.TraceEnabled() {
-		newZapOpts = append(newZapOpts, zap.AddStacktrace(zapcore.ErrorLevel))
-	}
+	newZapOpts := buildZapOpts(newBase)
 
 	return &zapHandler{
 		base: newBase,
@@ -321,15 +302,7 @@ func (h *zapHandler) WithTrace(enabled bool) handler.AdvancedHandler {
 	}
 
 	// Rebuild zapOpts with new trace state
-	newZapOpts := make([]zap.Option, 0, 2)
-	if newBase.CallerEnabled() {
-		newZapOpts = append(newZapOpts,
-			zap.AddCaller(),
-			zap.AddCallerSkip(newBase.CallerSkip()))
-	}
-	if enabled {
-		newZapOpts = append(newZapOpts, zap.AddStacktrace(zapcore.ErrorLevel))
-	}
+	newZapOpts := buildZapOpts(newBase)
 
 	return &zapHandler{
 		base: newBase,
@@ -439,6 +412,20 @@ func (h *zapHandler) Sync() error {
 	return h.logger.Sync()
 }
 
+// buildZapOpts creates zap.Option slice from BaseHandler state.
+func buildZapOpts(base *handler.BaseHandler) []zap.Option {
+	opts := make([]zap.Option, 0, 2)
+	if base.CallerEnabled() {
+		// AddCallerSkip needs to account for our adapter's internal frames
+		opts = append(opts, zap.AddCaller(), zap.AddCallerSkip(base.CallerSkip()))
+	}
+	if base.TraceEnabled() {
+		// Adds stack trace to logs at Error level and above
+		opts = append(opts, zap.AddStacktrace(zapcore.ErrorLevel))
+	}
+	return opts
+}
+
 // attrsToZapFields transforms a slice of handler.Attr into zap.Fields.
 func (h *zapHandler) keyValuesToZapFields(keyValues []any) []zap.Field {
 	n := len(keyValues)
@@ -471,32 +458,30 @@ func attrToZapField(key string, v any) zap.Field {
 	switch vv := v.(type) {
 	case string:
 		return zap.String(key, vv)
-	case bool:
-		return zap.Bool(key, vv)
 	case int:
 		return zap.Int(key, vv)
-	case int8:
-		return zap.Int8(key, vv)
-	case int16:
-		return zap.Int16(key, vv)
+	case error:
+		return zap.NamedError(key, vv)
+	case bool:
+		return zap.Bool(key, vv)
 	case int64:
 		return zap.Int64(key, vv)
-	case uint:
-		return zap.Uint(key, vv)
-	case uint8:
-		return zap.Uint8(key, vv)
-	case uint64:
-		return zap.Uint64(key, vv)
 	case float64:
 		return zap.Float64(key, vv)
-	case []byte:
-		return zap.ByteString(key, vv)
 	case time.Time:
 		return zap.Time(key, vv)
 	case time.Duration:
 		return zap.Duration(key, vv)
-	case error:
-		return zap.NamedError(key, vv)
+	case uint64:
+		return zap.Uint64(key, vv)
+	case uint:
+		return zap.Uint(key, vv)
+	case int8:
+		return zap.Int8(key, vv)
+	case int16:
+		return zap.Int16(key, vv)
+	case []byte:
+		return zap.ByteString(key, vv)
 	default:
 		return zap.Any(key, vv)
 	}
