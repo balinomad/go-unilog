@@ -44,11 +44,11 @@ type Chainer interface {
 	Handler
 
 	// WithAttrs returns a new Chainer with the given key-value pairs added.
-	// It returns the original logger if no key-value pairs are provided.
+	// It returns the original handler if no key-value pairs are provided.
 	WithAttrs(keyValues []any) Chainer
 
 	// WithGroup returns a new Chainer that qualifies subsequent attribute keys
-	// with the group name. It returns the original logger if the name is empty.
+	// with the group name. It returns the original handler if the name is empty.
 	WithGroup(name string) Chainer
 }
 
@@ -59,11 +59,11 @@ type AdvancedHandler interface {
 	Handler
 
 	// WithLevel returns a new AdvancedHandler with a new minimum level applied.
-	// It returns the original logger if the level value is unchanged.
+	// It returns the original handler if the level value is unchanged.
 	WithLevel(level LogLevel) AdvancedHandler
 
 	// WithOutput returns a new AdvancedHandler with the output writer set permanently.
-	// It returns the original logger if the writer value is unchanged.
+	// It returns the original handler if the writer value is unchanged.
 	WithOutput(w io.Writer) AdvancedHandler
 
 	// WithCallerSkip returns a new AdvancedHandler with the absolute
@@ -77,12 +77,12 @@ type AdvancedHandler interface {
 	WithCallerSkipDelta(delta int) AdvancedHandler
 
 	// WithCaller returns a clone that enables or disables caller resolution.
-	// It returns the original logger if the enabled value is unchanged.
+	// It returns the original handler if the enabled value is unchanged.
 	// By default, caller resolution is disabled.
 	WithCaller(enabled bool) AdvancedHandler
 
 	// WithTrace returns a new AdvancedHandler that enables or disables trace logging.
-	// It returns the original logger if the enabled value is unchanged.
+	// It returns the original handler if the enabled value is unchanged.
 	// By default, trace logging is disabled.
 	WithTrace(enabled bool) AdvancedHandler
 }

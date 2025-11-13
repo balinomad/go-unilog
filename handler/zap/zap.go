@@ -227,19 +227,12 @@ func (h *zapHandler) WithGroup(name string) handler.Chainer {
 
 // SetLevel dynamically changes the minimum level of logs that will be processed.
 func (h *zapHandler) SetLevel(level handler.LogLevel) error {
-	if err := handler.ValidateLogLevel(level); err != nil {
-		return err
-	}
-
-	// Update zap first (fail-safe: if base update fails, we can rollback)
-	h.atomicLevel.SetLevel(levelMapper.Map(level))
-
 	// Validate and store in base
 	if err := h.base.SetLevel(level); err != nil {
-		// Rollback zap level on error
-		h.atomicLevel.SetLevel(levelMapper.Map(h.base.Level()))
 		return err
 	}
+
+	h.atomicLevel.SetLevel(levelMapper.Map(level))
 
 	return nil
 }
@@ -322,6 +315,8 @@ func (h *zapHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler {
 	}
 }
 
+// WithOutput returns a new handler with the output writer set permanently.
+// It returns the original handler if the writer value is unchanged.
 func (h *zapHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
 	_ = h.logger.Sync()
 
