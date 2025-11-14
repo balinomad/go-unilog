@@ -71,7 +71,7 @@ type zapHandler struct {
 	callerSkip int
 }
 
-// Ensure zapHandler implements the following interfaces.
+// Ensure zapHandler implements all interfaces explicitly.
 var (
 	_ handler.Handler         = (*zapHandler)(nil)
 	_ handler.Chainer         = (*zapHandler)(nil)
