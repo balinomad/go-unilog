@@ -263,7 +263,6 @@ func (h *zapHandler) WithCaller(enabled bool) handler.AdvancedHandler {
 	clone.logger = zap.New(zapcore.NewCore(h.encoderFactory(), h.writeSyncer, h.atomicLevel), newZapOpts...)
 	clone.zapOpts = newZapOpts
 	clone.withCaller = enabled
-	clone.callerSkip = newBase.CallerSkip()
 
 	return clone
 }
@@ -283,7 +282,7 @@ func (h *zapHandler) WithTrace(enabled bool) handler.AdvancedHandler {
 	clone.base = newBase
 	clone.logger = zap.New(zapcore.NewCore(h.encoderFactory(), h.writeSyncer, h.atomicLevel), newZapOpts...)
 	clone.zapOpts = newZapOpts
-	clone.withCaller = enabled
+	clone.withTrace = enabled
 
 	return clone
 }
@@ -351,6 +350,7 @@ func (h *zapHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
 	if skip == current {
 		return h
 	}
+
 	return h.WithCallerSkipDelta(skip - current)
 }
 
