@@ -39,7 +39,22 @@ type Handler interface {
 }
 
 // Chainer extends Handler with methods for chaining log attributes.
-// Implementations return new Chainer instances (immutable pattern).
+//
+// IMPORTANT: Chainer methods return NEW handlers that SHARE mutable state
+// (level, output) with the parent. This enables:
+//   - Runtime reconfiguration: parent.SetLevel(Debug) affects all children
+//   - Efficient request chains: minimal allocations for With() calls
+//
+// If you need independent loggers for different modules, use
+// AdvancedHandler.WithLevel() or create separate handler instances.
+//
+// Example:
+//
+//	parent := logger.With("service", "api")
+//	child := parent.With("endpoint", "/users")
+//	parent.SetLevel(Debug)  // Also affects child
+//
+// Implementations return new Chainer instances (shallow copy semantics).
 type Chainer interface {
 	Handler
 
@@ -53,8 +68,24 @@ type Chainer interface {
 }
 
 // AdvancedHandler extends Handler with immutable configuration methods.
+//
+// IMPORTANT: AdvancedHandler methods return NEW handlers that are
+// INDEPENDENT from the parent. Mutations (SetLevel, SetOutput) on the
+// new handler do NOT affect the parent.
+//
+// Use these methods when you need:
+//   - Module-specific log levels
+//   - Different output destinations per component
+//   - Isolated configuration changes
+//
+// Example:
+//
+//	dbLogger := logger.WithLevel(Debug)  // Independent
+//	dbLogger.SetLevel(Info)              // Only affects dbLogger
+//	logger.Enabled(Debug)                // Still original level
+//
 // These methods mirror the 'With...' methods on the unilog.AdvancedLogger.
-// Implementations return new AdvancedHandler instances (immutable pattern).
+// Implementations return new AdvancedHandler instances (deep copy semantics).
 type AdvancedHandler interface {
 	Handler
 
