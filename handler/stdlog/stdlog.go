@@ -8,252 +8,307 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
-	"sync/atomic"
 
-	"github.com/balinomad/go-atomicwriter"
 	"github.com/balinomad/go-caller"
 	"github.com/balinomad/go-ctxmap"
-	"github.com/balinomad/go-unilog"
+	"github.com/balinomad/go-unilog/handler"
 )
-
-// DefaultKeySeparator is the default separator for group key prefixes.
-const DefaultKeySeparator = "_"
 
 // fieldStringer returns a string representation of a key-value pair.
 var fieldStringer = func(k string, v any) string { return k + "=" + fmt.Sprint(v) }
 
-// stdLogger is a unilog.Logger implementation for Go's standard library log package.
-type stdLogger struct {
-	l          *log.Logger
-	out        *atomicwriter.AtomicWriter
-	lvl        atomic.Int32
-	fields     *ctxmap.CtxMap
+// stdLogOptions holds configuration for the standard logger.
+type stdLogOptions struct {
+	base  *handler.BaseOptions
+	flags int // log.Ldate | log.Ltime | log.Lmicroseconds, etc.
+}
+
+// StdLogOption configures the standard logger creation.
+type StdLogOption func(*stdLogOptions) error
+
+// WithLevel sets the minimum log level.
+func WithLevel(level handler.LogLevel) StdLogOption {
+	return func(o *stdLogOptions) error {
+		return handler.WithLevel(level)(o.base)
+	}
+}
+
+// WithOutput sets the output writer.
+func WithOutput(w io.Writer) StdLogOption {
+	return func(o *stdLogOptions) error {
+		return handler.WithOutput(w)(o.base)
+	}
+}
+
+// WithSeparator sets the separator for group key prefixes.
+func WithSeparator(separator string) StdLogOption {
+	return func(o *stdLogOptions) error {
+		return handler.WithSeparator(separator)(o.base)
+	}
+}
+
+// WithCaller enables or disables source location reporting.
+// If enabled, the handler will include the source location
+// of the log call site in the log record.
+// This can be useful for debugging, but may incur a performance hit
+// due to the additional stack frame analysis. The default value is false.
+func WithCaller(enabled bool) StdLogOption {
+	return func(o *stdLogOptions) error {
+		return handler.WithCaller(enabled)(o.base)
+	}
+}
+
+// WithTrace enables stack traces for ERROR and above.
+func WithTrace(enabled bool) StdLogOption {
+	return func(o *stdLogOptions) error {
+		return handler.WithTrace(enabled)(o.base)
+	}
+}
+
+// WithFlags sets the log flags.
+func WithFlags(flags int) StdLogOption {
+	return func(o *stdLogOptions) error {
+		o.flags = flags
+		return nil
+	}
+}
+
+// stdLogHandler is a wrapper around Go's standard library log package.
+type stdLogHandler struct {
+	base   *handler.BaseHandler
+	logger *log.Logger
+	fields *ctxmap.CtxMap
+
+	// Cached from base for hot-path (immutable after With/Clone)
 	withCaller bool
 	withTrace  bool
 	callerSkip int
+	keyPrefix  string
+	separator  string
 }
 
-// Ensure stdLogger implements the following interfaces.
+// Ensure stdLogHandler implements the following interfaces.
 var (
-	_ unilog.Logger        = (*stdLogger)(nil)
-	_ unilog.Configurator  = (*stdLogger)(nil)
-	_ unilog.Cloner        = (*stdLogger)(nil)
-	_ unilog.CallerSkipper = (*stdLogger)(nil)
+	_ handler.Handler         = (*stdLogHandler)(nil)
+	_ handler.Chainer         = (*stdLogHandler)(nil)
+	_ handler.AdvancedHandler = (*stdLogHandler)(nil)
+	_ handler.Configurator    = (*stdLogHandler)(nil)
 )
 
-// New creates a new unilog.Logger instance backed by the standard log.
-func New(opts ...LogOption) (unilog.Logger, error) {
-	o := &logOptions{
-		level:     unilog.InfoLevel,
-		output:    os.Stderr,
-		separator: DefaultKeySeparator,
+// New creates a new handler.Handler instance backed by the standard log.
+func New(opts ...StdLogOption) (handler.Handler, error) {
+	o := &stdLogOptions{
+		base: &handler.BaseOptions{
+			Level:  handler.DefaultLevel,
+			Output: os.Stderr,
+		},
+		flags: log.LstdFlags,
 	}
 
 	for _, opt := range opts {
 		if err := opt(o); err != nil {
-			return nil, unilog.ErrFailedOption(err)
+			return nil, err
 		}
 	}
 
-	aw, err := atomicwriter.NewAtomicWriter(o.output)
+	base, err := handler.NewBaseHandler(o.base)
 	if err != nil {
-		return nil, unilog.ErrAtomicWriterFail(err)
+		return nil, err
 	}
 
-	l := &stdLogger{
-		l:          log.New(aw, "", log.LstdFlags),
-		out:        aw,
-		fields:     ctxmap.NewCtxMap(o.separator, " ", fieldStringer),
-		withCaller: o.withCaller,
-		withTrace:  o.withTrace,
-		callerSkip: o.callerSkip,
-	}
-	l.lvl.Store(int32(o.level))
-
-	return l, nil
+	return &stdLogHandler{
+		base:       base,
+		logger:     log.New(base.AtomicWriter(), "", o.flags),
+		fields:     ctxmap.NewCtxMap(base.Separator(), " ", fieldStringer),
+		withCaller: base.CallerEnabled(),
+		withTrace:  base.TraceEnabled(),
+		callerSkip: base.CallerSkip(),
+		keyPrefix:  base.KeyPrefix(),
+		separator:  base.Separator(),
+	}, nil
 }
 
-// log is the internal logging function used by the unilog.Logger interface. It adds caller and
+// log is the internal logging function used by the handler.Handler interface. It adds caller and
 // stack trace information before passing the record to the underlying slog logger.
-func (l *stdLogger) log(level unilog.LogLevel, msg string, skip int, keyValues ...any) {
-	if !l.Enabled(level) {
-		return
+func (h *stdLogHandler) Handle(ctx context.Context, r *handler.Record) error {
+	if !h.Enabled(r.Level) {
+		return nil
 	}
 
-	fields := l.fields.WithPairs(keyValues...)
+	// Add key-value pairs from the record
+	fields := h.fields.WithPairs(r.KeyValues...)
 
-	if l.withCaller {
-		// Add 2 to skip this function and the caller function
-		if s := l.callerSkip + skip + 2; s > 0 {
-			fields.Set("source", caller.New(s).Location())
-		}
+	//Program counter already contains the caller
+	if h.withCaller {
+		fields.Set("source", caller.NewFromPC(r.PC).Location())
 	}
 
-	if l.withTrace && level >= unilog.ErrorLevel {
+	if h.withTrace && r.Level >= handler.ErrorLevel {
 		fields.Set("stack", string(debug.Stack()))
 	}
 
 	var sb strings.Builder
 	sb.WriteString("[")
-	sb.WriteString(level.String())
+	sb.WriteString(r.Level.String())
 	sb.WriteString("] ")
-	sb.WriteString(msg)
+	sb.WriteString(r.Message)
 	if fields.Len() > 0 {
 		sb.WriteString(" ")
 		sb.WriteString(fields.String())
 	}
 
-	l.l.Println(sb.String())
+	h.logger.Println(sb.String())
 
-	// Handle termination levels
-	switch level {
-	case unilog.FatalLevel:
-		os.Exit(1)
-	case unilog.PanicLevel:
-		panic(msg)
-	}
-}
-
-// Log implements the unilog.Logger interface for the standard logger.
-func (l *stdLogger) Log(_ context.Context, level unilog.LogLevel, msg string, keyValues ...any) {
-	l.log(level, msg, 0, keyValues...)
-}
-
-// LogWithSkip implements the unilog.CallerSkipper interface for the standard logger.
-func (l *stdLogger) LogWithSkip(_ context.Context, level unilog.LogLevel, msg string, skip int, keyValues ...any) {
-	l.log(level, msg, skip, keyValues...)
+	return nil
 }
 
 // Enabled checks if the given log level is enabled.
-func (l *stdLogger) Enabled(level unilog.LogLevel) bool {
-	return level >= unilog.LogLevel(l.lvl.Load())
+func (h *stdLogHandler) Enabled(level handler.LogLevel) bool {
+	return h.base.Enabled(level)
 }
 
-// With returns a new logger with the provided keyValues added to the context.
-func (l *stdLogger) With(keyValues ...any) unilog.Logger {
+// Base returns the underlying BaseHandler.
+func (h *stdLogHandler) HandlerState() handler.HandlerState {
+	return h.base
+}
+
+// Features returns the supported HandlerFeatures.
+func (h *stdLogHandler) Features() handler.HandlerFeatures {
+	return handler.NewHandlerFeatures(handler.FeatDynamicLevel | handler.FeatDynamicOutput)
+}
+
+// WithAttrs returns a new logger with the provided keyValues added to the context.
+// If keyValues is empty, the original logger is returned.
+func (h *stdLogHandler) WithAttrs(keyValues []any) handler.Chainer {
 	if len(keyValues) < 2 {
-		return l
+		return h
 	}
 
-	clone := l.clone()
-	clone.fields = l.fields.WithPairs(keyValues)
+	clone := h.clone()
+	clone.fields = h.fields.WithPairs(keyValues)
 
 	return clone
 }
 
 // WithGroup returns a Logger that starts a group, if name is non-empty.
-func (l *stdLogger) WithGroup(name string) unilog.Logger {
+func (h *stdLogHandler) WithGroup(name string) handler.Chainer {
 	if name == "" {
-		return l
+		return h
 	}
 
-	clone := l.clone()
-	clone.fields = l.fields.WithPrefix(name)
+	clone := h.clone()
+	clone.fields = h.fields.WithPrefix(name)
 
 	return clone
 }
 
 // SetLevel dynamically changes the minimum level of logs that will be processed.
-func (l *stdLogger) SetLevel(level unilog.LogLevel) error {
-	if err := unilog.ValidateLogLevel(level); err != nil {
-		return err
-	}
-
-	l.lvl.Store(int32(level))
-
-	return nil
+func (h *stdLogHandler) SetLevel(level handler.LogLevel) error {
+	return h.base.SetLevel(level)
 }
 
 // SetOutput sets the log destination.
-func (l *stdLogger) SetOutput(w io.Writer) error {
-	return l.out.Swap(w)
+func (h *stdLogHandler) SetOutput(w io.Writer) error {
+	return h.base.SetOutput(w)
 }
 
 // CallerSkip returns the current number of stack frames being skipped.
-func (l *stdLogger) CallerSkip() int {
-	return l.callerSkip
+func (h *stdLogHandler) CallerSkip() int {
+	return h.base.CallerSkip()
 }
 
-// WithCallerSkip returns a new Logger instance with the caller skip value updated.
-func (l *stdLogger) WithCallerSkip(skip int) (unilog.Logger, error) {
-	if skip < 0 {
-		return l, unilog.ErrInvalidSourceSkip
+// WithCaller returns a new handler with caller reporting enabled or disabled.
+// It returns the original handler if the enabled value is unchanged.
+func (h *stdLogHandler) WithCaller(enabled bool) handler.AdvancedHandler {
+	newBase := h.base.WithCaller(enabled)
+	if newBase == h.base {
+		return h
 	}
 
-	if skip == l.callerSkip {
-		return l, nil
+	return h.deepClone(newBase)
+}
+
+// WithTrace returns a new handler that enables or disables stack trace logging for error-level logs.
+// It returns the original handler if the enabled value is unchanged.
+func (h *stdLogHandler) WithTrace(enabled bool) handler.AdvancedHandler {
+	newBase := h.base.WithTrace(enabled)
+	if newBase == h.base {
+		return h
 	}
 
-	clone := l.clone()
-	clone.callerSkip = skip
+	return h.deepClone(newBase)
+}
 
-	return clone, nil
+// WithLevel returns a new Zap handler with a new minimum level applied.
+// It returns the original handler if the level value is unchanged.
+func (h *stdLogHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler {
+	newBase, err := h.base.WithLevel(level)
+	if err != nil || newBase == h.base {
+		return h
+	}
+
+	return h.deepClone(newBase)
+}
+
+// WithOutput returns a new handler with the output writer set permanently.
+// It returns the original handler if the writer value is unchanged.
+func (h *stdLogHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
+	newBase, err := h.base.WithOutput(w)
+	if err != nil || newBase == h.base {
+		return h
+	}
+
+	return h.deepClone(newBase)
+}
+
+// WithCallerSkip returns a new handler with the caller skip permanently adjusted.
+func (h *stdLogHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
+	current := h.base.CallerSkip()
+	if skip == current {
+		return h
+	}
+
+	return h.WithCallerSkipDelta(skip - current)
 }
 
 // WithCallerSkipDelta returns a new Logger instance with the caller skip value altered by the given delta.
-func (l *stdLogger) WithCallerSkipDelta(delta int) (unilog.Logger, error) {
+func (h *stdLogHandler) WithCallerSkipDelta(delta int) handler.AdvancedHandler {
 	if delta == 0 {
-		return l, nil
+		return h
 	}
 
-	return l.WithCallerSkip(l.callerSkip + delta)
-}
-
-// clone returns a deep copy of the logger.
-func (l *stdLogger) clone() *stdLogger {
-	clone := &stdLogger{
-		l:          l.l,
-		out:        l.out,
-		withTrace:  l.withTrace,
-		withCaller: l.withCaller,
-		callerSkip: l.callerSkip,
+	newBase, err := h.base.WithCallerSkipDelta(delta)
+	if err != nil {
+		return h
 	}
-	clone.lvl.Store(l.lvl.Load())
 
-	return clone
+	return h.deepClone(newBase)
 }
 
-// Clone returns a deep copy of the logger as a unilog.Logger.
-func (l *stdLogger) Clone() unilog.Logger {
-	return l.clone()
+// clone returns a shallow copy of the logger.
+func (h *stdLogHandler) clone() *stdLogHandler {
+	return &stdLogHandler{
+		base:       h.base,
+		logger:     h.logger,
+		fields:     h.fields,
+		withCaller: h.withCaller,
+		withTrace:  h.withTrace,
+		callerSkip: h.callerSkip,
+		keyPrefix:  h.keyPrefix,
+		separator:  h.separator,
+	}
 }
 
-// Trace logs a message at the trace level.
-func (l *stdLogger) Trace(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.TraceLevel, msg, 0, keyValues...)
-}
-
-// Debug logs a message at the debug level.
-func (l *stdLogger) Debug(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.DebugLevel, msg, 0, keyValues...)
-}
-
-// Info logs a message at the info level.
-func (l *stdLogger) Info(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.InfoLevel, msg, 0, keyValues...)
-}
-
-// Warn logs a message at the warn level.
-func (l *stdLogger) Warn(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.WarnLevel, msg, 0, keyValues...)
-}
-
-// Error logs a message at the error level.
-func (l *stdLogger) Error(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.ErrorLevel, msg, 0, keyValues...)
-}
-
-// Critical logs a message at the critical level.
-func (l *stdLogger) Critical(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.CriticalLevel, msg, 0, keyValues...)
-}
-
-// Fatal logs a message at the fatal level and exits the process.
-func (l *stdLogger) Fatal(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.FatalLevel, msg, 0, keyValues...)
-}
-
-// Panic logs a message at the panic level and panics.
-func (l *stdLogger) Panic(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.PanicLevel, msg, 0, keyValues...)
+// deepClone returns a deep copy of the logger with a new BaseHandler.
+func (h *stdLogHandler) deepClone(base *handler.BaseHandler) *stdLogHandler {
+	return &stdLogHandler{
+		base:       base,
+		logger:     log.New(base.AtomicWriter(), "", h.logger.Flags()),
+		fields:     h.fields.Clone(),
+		withCaller: base.CallerEnabled(),
+		withTrace:  base.TraceEnabled(),
+		callerSkip: base.CallerSkip(),
+		keyPrefix:  base.KeyPrefix(),
+		separator:  base.Separator(),
+	}
 }
