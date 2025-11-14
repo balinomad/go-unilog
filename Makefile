@@ -1,6 +1,6 @@
 SHELL := /usr/bin/env bash
 
-.PHONY: test fulltest bench cover fullcover cyclo fullcyclo examples
+.PHONY: test fulltest bench cover fullcover cyclo fullcyclo examples tidy
 
 test:
 	@go test -timeout 30s ./...
@@ -43,3 +43,9 @@ fullcyclo:
 
 examples:
 	go test -v -run Example
+
+tidy:
+	@find . -name go.mod -execdir bash -lc 'printf "%s %s\n" "->" "$$PWD"; \
+		go clean -modcache || true; \
+		go get github.com/balinomad/go-unilog@latest || true; \
+		go mod tidy || true' \;
