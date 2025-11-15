@@ -421,10 +421,11 @@ func keyValuesToZapFields(keyValues []any) []zap.Field {
 		return nil
 	}
 
-	// Stack-allocate for common case (≤4 fields)
-	var stackFields [4]zap.Field
+	// Stack-allocate for common case (≤6 attributes)
+	const stackN = 6
+	var stackFields [stackN]zap.Field
 	var fields []zap.Field
-	if fieldCount <= 4 {
+	if fieldCount <= stackN {
 		fields = stackFields[:0]
 	} else {
 		fields = make([]zap.Field, 0, fieldCount)
