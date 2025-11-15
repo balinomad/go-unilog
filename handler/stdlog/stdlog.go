@@ -79,11 +79,9 @@ type stdLogHandler struct {
 	logger *log.Logger
 	fields *ctxmap.CtxMap
 
-	// Cached from base for hot-path (immutable after With/Clone)
+	// Cached from base for lock-free hot-path
 	withCaller bool
 	withTrace  bool
-	callerSkip int
-	keyPrefix  string
 	separator  string
 }
 
@@ -122,36 +120,39 @@ func New(opts ...StdLogOption) (handler.Handler, error) {
 		fields:     ctxmap.NewCtxMap(base.Separator(), " ", fieldStringer),
 		withCaller: base.CallerEnabled(),
 		withTrace:  base.TraceEnabled(),
-		callerSkip: base.CallerSkip(),
-		keyPrefix:  base.KeyPrefix(),
 		separator:  base.Separator(),
 	}, nil
 }
 
-// log is the internal logging function used by the handler.Handler interface. It adds caller and
-// stack trace information before passing the record to the underlying slog logger.
-func (h *stdLogHandler) Handle(ctx context.Context, r *handler.Record) error {
+// Handle implements the handler.Handler interface for zap.
+func (h *stdLogHandler) Handle(_ context.Context, r *handler.Record) error {
 	if !h.Enabled(r.Level) {
 		return nil
 	}
 
-	// Add key-value pairs from the record
-	fields := h.fields.WithPairs(r.KeyValues...)
-
-	//Program counter already contains the caller
-	if h.withCaller {
-		fields.Set("source", caller.NewFromPC(r.PC).Location())
-	}
-
-	if h.withTrace && r.Level >= handler.ErrorLevel {
-		fields.Set("stack", string(debug.Stack()))
-	}
-
+	// Pre-allocate builder with reasonable capacity
 	var sb strings.Builder
+	sb.Grow(160)
+
+	// Level prefix
 	sb.WriteString("[")
 	sb.WriteString(r.Level.String())
 	sb.WriteString("] ")
 	sb.WriteString(r.Message)
+
+	// Add key-value pairs
+	fields := h.fields.WithPairs(r.KeyValues...)
+
+	// Only compute caller if enabled
+	if h.withCaller && r.PC != 0 {
+		fields.Set("source", caller.NewFromPC(r.PC).Location())
+	}
+
+	// Only capture stack if enabled and error-level
+	if h.withTrace && r.Level >= handler.ErrorLevel {
+		fields.Set("stack", string(debug.Stack()))
+	}
+
 	if fields.Len() > 0 {
 		sb.WriteString(" ")
 		sb.WriteString(fields.String())
@@ -167,7 +168,7 @@ func (h *stdLogHandler) Enabled(level handler.LogLevel) bool {
 	return h.base.Enabled(level)
 }
 
-// Base returns the underlying BaseHandler.
+// HandlerState returns the underlying BaseHandler.
 func (h *stdLogHandler) HandlerState() handler.HandlerState {
 	return h.base
 }
@@ -228,7 +229,7 @@ func (h *stdLogHandler) WithCaller(enabled bool) handler.AdvancedHandler {
 	return h.deepClone(newBase)
 }
 
-// WithTrace returns a new handler that enables or disables stack trace logging for error-level logs.
+// WithTrace returns a new handler that enables or disables stack trace logging.
 // It returns the original handler if the enabled value is unchanged.
 func (h *stdLogHandler) WithTrace(enabled bool) handler.AdvancedHandler {
 	newBase := h.base.WithTrace(enabled)
@@ -239,7 +240,7 @@ func (h *stdLogHandler) WithTrace(enabled bool) handler.AdvancedHandler {
 	return h.deepClone(newBase)
 }
 
-// WithLevel returns a new Zap handler with a new minimum level applied.
+// WithLevel returns a new handler with a new minimum level applied.
 // It returns the original handler if the level value is unchanged.
 func (h *stdLogHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler {
 	newBase, err := h.base.WithLevel(level)
@@ -262,6 +263,7 @@ func (h *stdLogHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
 }
 
 // WithCallerSkip returns a new handler with the caller skip permanently adjusted.
+// It returns the original handler if the skip value is unchanged.
 func (h *stdLogHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
 	current := h.base.CallerSkip()
 	if skip == current {
@@ -271,7 +273,8 @@ func (h *stdLogHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
 	return h.WithCallerSkipDelta(skip - current)
 }
 
-// WithCallerSkipDelta returns a new Logger instance with the caller skip value altered by the given delta.
+// WithCallerSkipDelta returns a new handler with the caller skip altered by delta.
+// It returns the original handler if the delta value is zero.
 func (h *stdLogHandler) WithCallerSkipDelta(delta int) handler.AdvancedHandler {
 	if delta == 0 {
 		return h
@@ -293,8 +296,6 @@ func (h *stdLogHandler) clone() *stdLogHandler {
 		fields:     h.fields,
 		withCaller: h.withCaller,
 		withTrace:  h.withTrace,
-		callerSkip: h.callerSkip,
-		keyPrefix:  h.keyPrefix,
 		separator:  h.separator,
 	}
 }
@@ -307,8 +308,6 @@ func (h *stdLogHandler) deepClone(base *handler.BaseHandler) *stdLogHandler {
 		fields:     h.fields.Clone(),
 		withCaller: base.CallerEnabled(),
 		withTrace:  base.TraceEnabled(),
-		callerSkip: base.CallerSkip(),
-		keyPrefix:  base.KeyPrefix(),
 		separator:  base.Separator(),
 	}
 }

@@ -174,7 +174,7 @@ func (h *zapHandler) Handle(ctx context.Context, r *handler.Record) error {
 		return nil
 	}
 
-	ce.Write(h.keyValuesToZapFields(r.KeyValues)...)
+	ce.Write(keyValuesToZapFields(r.KeyValues)...)
 
 	return nil
 }
@@ -202,7 +202,7 @@ func (h *zapHandler) Features() handler.HandlerFeatures {
 // WithAttrs returns a child handler with the provided keyValues added to the context.
 // If keyValues is empty, the original handler is returned.
 func (h *zapHandler) WithAttrs(keyValues []any) handler.Chainer {
-	fields := h.keyValuesToZapFields(keyValues)
+	fields := keyValuesToZapFields(keyValues)
 	if len(fields) == 0 {
 		return h
 	}
@@ -412,8 +412,8 @@ func buildZapOpts(base *handler.BaseHandler) []zap.Option {
 	return opts
 }
 
-// attrsToZapFields transforms a slice of handler.Attr into zap.Fields.
-func (h *zapHandler) keyValuesToZapFields(keyValues []any) []zap.Field {
+// keyValuesToZapFields transforms keyValues to zap.Fields.
+func keyValuesToZapFields(keyValues []any) []zap.Field {
 	n := len(keyValues)
 	fieldCount := n / 2
 

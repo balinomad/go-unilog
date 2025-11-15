@@ -149,4 +149,4 @@ func verifySkipFrames(t *testing.T, logger unilog.Logger) {
 ```
 ## Example
 
-See [`handler/slog/slog.go`](../handler/slog/slog.go) for reference implementation.
+See [`handler/zap/zap.go`](../handler/zap/zap.go) or [`handler/stdlog/stdlog.go`](../handler/stdlog/stdlog.go) for reference implementations.

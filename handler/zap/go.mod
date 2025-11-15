@@ -2,7 +2,7 @@ module github.com/balinomad/go-unilog/handler/zap
 
 go 1.24
 
-require github.com/balinomad/go-unilog v0.0.0-20251114094459-9bc15bb501a2
+require github.com/balinomad/go-unilog v0.0.0-20251114120151-bfcf578dd133
 
 require github.com/balinomad/go-atomicwriter v1.0.1 // indirect
 
