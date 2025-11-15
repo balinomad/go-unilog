@@ -16,7 +16,8 @@ var validFormats = []string{"json", "text"}
 
 // slogOptions holds configuration for the slog logger.
 type slogOptions struct {
-	base *handler.BaseOptions
+	base        *handler.BaseOptions
+	replaceAttr func([]string, slog.Attr) slog.Attr // slog-specific option
 }
 
 // SlogOption configures slog logger creation.
@@ -57,12 +58,21 @@ func WithTrace(enabled bool) SlogOption {
 	}
 }
 
+// WithReplaceAttr sets a custom attribute transformation function.
+func WithReplaceAttr(fn func([]string, slog.Attr) slog.Attr) SlogOption {
+	return func(o *slogOptions) error {
+		o.replaceAttr = fn
+		return nil
+	}
+}
+
 // slogHandler is a wrapper around Go's [log/slog] logger.
 type slogHandler struct {
-	base    *handler.BaseHandler
-	logger  *slog.Logger
-	level   *slog.LevelVar
-	handler slog.Handler
+	base        *handler.BaseHandler
+	logger      *slog.Logger
+	level       *slog.LevelVar
+	handler     slog.Handler
+	replaceAttr func([]string, slog.Attr) slog.Attr
 
 	// Cached from base for lock-free hot-path
 	withCaller bool
@@ -115,8 +125,9 @@ func New(opts ...SlogOption) (handler.Handler, error) {
 	levelVar.Set(levelMapper.Map(base.Level()))
 
 	handlerOpts := &slog.HandlerOptions{
-		Level:     levelVar,
-		AddSource: base.CallerEnabled(),
+		Level:       levelVar,
+		AddSource:   base.CallerEnabled(),
+		ReplaceAttr: o.replaceAttr,
 	}
 
 	var h slog.Handler
@@ -127,12 +138,13 @@ func New(opts ...SlogOption) (handler.Handler, error) {
 	}
 
 	return &slogHandler{
-		base:       base,
-		logger:     slog.New(h),
-		level:      levelVar,
-		handler:    h,
-		withCaller: base.CallerEnabled(),
-		withTrace:  base.TraceEnabled(),
+		base:        base,
+		logger:      slog.New(h),
+		level:       levelVar,
+		handler:     h,
+		replaceAttr: o.replaceAttr,
+		withCaller:  base.CallerEnabled(),
+		withTrace:   base.TraceEnabled(),
 	}, nil
 }
 
@@ -302,12 +314,13 @@ func (h *slogHandler) WithCallerSkipDelta(delta int) handler.AdvancedHandler {
 // clone returns a shallow copy of the handler.
 func (h *slogHandler) clone() *slogHandler {
 	return &slogHandler{
-		base:       h.base,
-		logger:     h.logger,
-		level:      h.level,
-		handler:    h.handler,
-		withCaller: h.withCaller,
-		withTrace:  h.withTrace,
+		base:        h.base,
+		logger:      h.logger,
+		level:       h.level,
+		handler:     h.handler,
+		replaceAttr: h.replaceAttr,
+		withCaller:  h.withCaller,
+		withTrace:   h.withTrace,
 	}
 }
 
@@ -317,8 +330,9 @@ func (h *slogHandler) deepClone(base *handler.BaseHandler) *slogHandler {
 	levelVar.Set(levelMapper.Map(base.Level()))
 
 	handlerOpts := &slog.HandlerOptions{
-		Level:     levelVar,
-		AddSource: base.CallerEnabled(),
+		Level:       levelVar,
+		AddSource:   base.CallerEnabled(),
+		ReplaceAttr: h.replaceAttr,
 	}
 
 	var sh slog.Handler
@@ -329,12 +343,13 @@ func (h *slogHandler) deepClone(base *handler.BaseHandler) *slogHandler {
 	}
 
 	return &slogHandler{
-		base:       base,
-		logger:     slog.New(sh),
-		level:      levelVar,
-		handler:    sh,
-		withCaller: base.CallerEnabled(),
-		withTrace:  base.TraceEnabled(),
+		base:        base,
+		logger:      slog.New(sh),
+		level:       levelVar,
+		handler:     sh,
+		replaceAttr: h.replaceAttr,
+		withCaller:  base.CallerEnabled(),
+		withTrace:   base.TraceEnabled(),
 	}
 }
 
@@ -347,10 +362,11 @@ func keyValuesToSlogAttrs(keyValues []any) []slog.Attr {
 		return nil
 	}
 
-	// Stack-allocate for common case (≤4 attributes)
-	var stackAttrs [4]slog.Attr
+	// Stack-allocate for common case (≤6 attributes)
+	const stackN = 6
+	var stackAttrs [stackN]slog.Attr
 	var attrs []slog.Attr
-	if attrCount <= 4 {
+	if attrCount <= stackN {
 		attrs = stackAttrs[:0]
 	} else {
 		attrs = make([]slog.Attr, 0, attrCount)
