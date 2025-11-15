@@ -2,5 +2,5 @@ github.com/balinomad/go-atomicwriter v1.0.1 h1:jUzEy3hsJwF/Tj9fm3A4HN+P84RjgXJfu
 github.com/balinomad/go-atomicwriter v1.0.1/go.mod h1:QaEVyXViHIIu61AYG580rjMHsGx2D0/w4GP4//sDezs=
 github.com/balinomad/go-caller v1.0.0 h1:cuzQHupOmhfWIOWz+Mi9kSqPT70NLbe07lMNJ0hrIFk=
 github.com/balinomad/go-caller v1.0.0/go.mod h1:v+ANiNL+PwvzmZsfBJxq7OtIBFborLxlOnEx1TzxCYM=
-github.com/balinomad/go-unilog v0.0.0-20251103020302-050cde3eee4b h1:lYuGv9QfFoYBRE4G+ASImhYAmnlkihJbrkNwQiBjKOA=
-github.com/balinomad/go-unilog v0.0.0-20251103020302-050cde3eee4b/go.mod h1:0Rn/24UV68xMmM4CXAPZ+PLdzXqvdyFtG7WI6aXT1co=
+github.com/balinomad/go-unilog v0.0.0-20251114120151-bfcf578dd133 h1:NF5MRlfYv8qV5oFRsXOZCFYHNe8GrbH4FsMBhmFFhnI=
+github.com/balinomad/go-unilog v0.0.0-20251114120151-bfcf578dd133/go.mod h1:CDFIQDrqCJZYH9dG3JwtXK0L0co6Oolx/BSsYiFdS0E=

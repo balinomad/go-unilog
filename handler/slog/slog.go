@@ -2,279 +2,367 @@ package slog
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"runtime/debug"
 
-	"github.com/balinomad/go-atomicwriter"
-	"github.com/balinomad/go-caller"
-	"github.com/balinomad/go-unilog"
+	"github.com/balinomad/go-unilog/handler"
 )
 
-// slogLogger is a wrapper around Go's standard slog.Logger.
-type slogLogger struct {
-	l          *slog.Logger
-	out        *atomicwriter.AtomicWriter
-	lvl        *slog.LevelVar
-	withTrace  bool
+// validFormats is the list of supported output formats.
+var validFormats = []string{"json", "text"}
+
+// slogOptions holds configuration for the slog logger.
+type slogOptions struct {
+	base *handler.BaseOptions
+}
+
+// SlogOption configures slog logger creation.
+type SlogOption func(*slogOptions) error
+
+// WithLevel sets the minimum log level.
+func WithLevel(level handler.LogLevel) SlogOption {
+	return func(o *slogOptions) error {
+		return handler.WithLevel(level)(o.base)
+	}
+}
+
+// WithOutput sets the output writer.
+func WithOutput(w io.Writer) SlogOption {
+	return func(o *slogOptions) error {
+		return handler.WithOutput(w)(o.base)
+	}
+}
+
+// WithFormat sets the output format ("json" or "text").
+func WithFormat(format string) SlogOption {
+	return func(o *slogOptions) error {
+		return handler.WithFormat(format)(o.base)
+	}
+}
+
+// WithCaller enables source injection. Optional skip overrides the user skip frames.
+func WithCaller(enabled bool, skip ...int) SlogOption {
+	return func(o *slogOptions) error {
+		return handler.WithCaller(enabled)(o.base)
+	}
+}
+
+// WithTrace enables stack traces for ERROR and above.
+func WithTrace(enabled bool) SlogOption {
+	return func(o *slogOptions) error {
+		return handler.WithTrace(enabled)(o.base)
+	}
+}
+
+// slogHandler is a wrapper around Go's [log/slog] logger.
+type slogHandler struct {
+	base    *handler.BaseHandler
+	logger  *slog.Logger
+	level   *slog.LevelVar
+	handler slog.Handler
+
+	// Cached from base for lock-free hot-path
 	withCaller bool
-	callerSkip int
+	withTrace  bool
 }
 
 // Ensure slogLogger implements the following interfaces.
 var (
-	_ unilog.Logger        = (*slogLogger)(nil)
-	_ unilog.Configurator  = (*slogLogger)(nil)
-	_ unilog.Cloner        = (*slogLogger)(nil)
-	_ unilog.CallerSkipper = (*slogLogger)(nil)
+	_ handler.Handler         = (*slogHandler)(nil)
+	_ handler.Chainer         = (*slogHandler)(nil)
+	_ handler.AdvancedHandler = (*slogHandler)(nil)
+	_ handler.Configurator    = (*slogHandler)(nil)
 )
 
-// New creates a new unilog.Logger instance backed by log/slog.
-func New(opts ...SlogOption) (unilog.Logger, error) {
+// levelMapper maps unilog log levels to slog log levels.
+var levelMapper = handler.NewLevelMapper(
+	slog.Level(-8),  // Trace
+	slog.LevelDebug, // Debug
+	slog.LevelInfo,  // Info
+	slog.LevelWarn,  // Warn
+	slog.LevelError, // Error
+	slog.Level(12),  // Critical
+	slog.Level(16),  // Fatal
+	slog.Level(20),  // Panic
+)
+
+// New creates a new handler.Handler instance backed by [log/slog].
+func New(opts ...SlogOption) (handler.Handler, error) {
 	o := &slogOptions{
-		level:  unilog.InfoLevel,
-		output: os.Stderr,
-		format: "json",
+		base: &handler.BaseOptions{
+			Level:        handler.InfoLevel,
+			Output:       os.Stderr,
+			Format:       "json",
+			ValidFormats: validFormats,
+		},
 	}
+
 	for _, opt := range opts {
 		if err := opt(o); err != nil {
-			return nil, unilog.ErrFailedOption(err)
+			return nil, err
 		}
+	}
+
+	base, err := handler.NewBaseHandler(o.base)
+	if err != nil {
+		return nil, err
 	}
 
 	levelVar := new(slog.LevelVar)
-	levelVar.Set(toSlogLevel(o.level))
-
-	aw, err := atomicwriter.NewAtomicWriter(o.output)
-	if err != nil {
-		return nil, unilog.ErrAtomicWriterFail(err)
-	}
+	levelVar.Set(levelMapper.Map(base.Level()))
 
 	handlerOpts := &slog.HandlerOptions{
 		Level:     levelVar,
-		AddSource: false, // we set this manually
+		AddSource: base.CallerEnabled(),
 	}
 
-	var handler slog.Handler
-	if o.format == "text" {
-		handler = slog.NewTextHandler(aw, handlerOpts)
+	var h slog.Handler
+	if base.Format() == "text" {
+		h = slog.NewTextHandler(base.AtomicWriter(), handlerOpts)
 	} else {
-		handler = slog.NewJSONHandler(aw, handlerOpts)
+		h = slog.NewJSONHandler(base.AtomicWriter(), handlerOpts)
 	}
 
-	l := &slogLogger{
-		l:          slog.New(handler),
-		lvl:        levelVar,
-		out:        aw,
-		withTrace:  o.withTrace,
-		withCaller: o.withCaller,
-		callerSkip: o.callerSkip,
-	}
-
-	return l, nil
+	return &slogHandler{
+		base:       base,
+		logger:     slog.New(h),
+		level:      levelVar,
+		handler:    h,
+		withCaller: base.CallerEnabled(),
+		withTrace:  base.TraceEnabled(),
+	}, nil
 }
 
-// log is the internal logging function used by the unilog.Logger interface. It adds caller and
-// stack trace information before passing the record to the underlying slog logger.
-func (l *slogLogger) log(ctx context.Context, level unilog.LogLevel, msg string, skip int, keyValues ...any) {
-	if !l.Enabled(level) {
-		return
+// Handle implements the handler.Handler interface for slog.
+func (h *slogHandler) Handle(ctx context.Context, r *handler.Record) error {
+	if !h.Enabled(r.Level) {
+		return nil
 	}
 
-	// Pre-allocate assuming 2 extra fields for source and stack
-	fields := make([]any, 0, len(keyValues)+4)
-	fields = append(fields, keyValues...)
+	// Convert keyValues to slog.Attr slice
+	attrs := keyValuesToSlogAttrs(r.KeyValues)
 
-	if len(fields)%2 == 1 {
-		fields = fields[:len(fields)-1]
+	// Only add stack if enabled and error-level
+	if h.withTrace && r.Level >= handler.ErrorLevel {
+		attrs = append(attrs, slog.String("stack", string(debug.Stack())))
 	}
 
-	if l.withCaller {
-		// Add 2 to skip this function and the caller function
-		if s := l.callerSkip + skip + 2; s > 0 {
-			fields = append(fields, slog.SourceKey, caller.New(s).Location())
-		}
-	}
+	// Build slog.Record with PC for native caller support
+	rec := slog.NewRecord(r.Time, levelMapper.Map(r.Level), r.Message, r.PC)
+	rec.AddAttrs(attrs...)
 
-	if l.withTrace && level >= unilog.ErrorLevel {
-		fields = append(fields, "stack", string(debug.Stack()))
-	}
+	// Use ctx for context propagation
+	h.logger.Handler().Handle(ctx, rec)
 
-	l.l.Log(ctx, toSlogLevel(level), msg, fields...)
-
-	// Handle termination levels
-	switch level {
-	case unilog.FatalLevel:
-		os.Exit(1)
-	case unilog.PanicLevel:
-		panic(msg)
-	}
-}
-
-// Log implements the unilog.Logger interface for slog.
-func (l *slogLogger) Log(ctx context.Context, level unilog.LogLevel, msg string, keyValues ...any) {
-	l.log(ctx, level, msg, 0, keyValues...)
-}
-
-// LogWithSkip implements the unilog.CallerSkipper interface for slog.
-func (l *slogLogger) LogWithSkip(ctx context.Context, level unilog.LogLevel, msg string, skip int, keyValues ...any) {
-	l.log(ctx, level, msg, skip, keyValues...)
+	return nil
 }
 
 // Enabled checks if the given log level is enabled.
-func (l *slogLogger) Enabled(level unilog.LogLevel) bool {
-	return l.l.Enabled(context.Background(), toSlogLevel(level))
+func (h *slogHandler) Enabled(level handler.LogLevel) bool {
+	return h.base.Enabled(level)
 }
 
-// With returns a new logger with the provided keyValues added to the context.
-func (l *slogLogger) With(keyValues ...any) unilog.Logger {
-	if len(keyValues) < 2 {
-		return l
+// HandlerState returns the underlying BaseHandler.
+func (h *slogHandler) HandlerState() handler.HandlerState {
+	return h.base
+}
+
+// Features returns the supported HandlerFeatures.
+func (h *slogHandler) Features() handler.HandlerFeatures {
+	return handler.NewHandlerFeatures(
+		handler.FeatNativeCaller | // slog.HandlerOptions.AddSource
+			handler.FeatNativeGroup | // slog.Handler.WithGroup
+			handler.FeatContextPropagation | // slog.Handler.Handle(ctx)
+			handler.FeatDynamicLevel |
+			handler.FeatDynamicOutput)
+}
+
+// WithAttrs returns a new logger with the provided keyValues added to the context.
+// If keyValues is empty, the original logger is returned.
+func (h *slogHandler) WithAttrs(keyValues []any) handler.Chainer {
+	attrs := keyValuesToSlogAttrs(keyValues)
+	if len(attrs) == 0 {
+		return h
 	}
 
-	clone := l.clone()
-	clone.l = clone.l.With(keyValues...)
+	clone := h.clone()
+	clone.handler = h.handler.WithAttrs(attrs)
+	clone.logger = slog.New(clone.handler)
 
 	return clone
 }
 
 // WithGroup returns a Logger that starts a group, if name is non-empty.
-func (l *slogLogger) WithGroup(name string) unilog.Logger {
+func (h *slogHandler) WithGroup(name string) handler.Chainer {
 	if name == "" {
-		return l
+		return h
 	}
 
-	clone := l.clone()
-	clone.l = clone.l.WithGroup(name)
+	clone := h.clone()
+	clone.handler = h.handler.WithGroup(name)
+	clone.logger = slog.New(clone.handler)
 
 	return clone
 }
 
 // SetLevel dynamically changes the minimum level of logs that will be processed.
-func (l *slogLogger) SetLevel(level unilog.LogLevel) error {
-	if err := unilog.ValidateLogLevel(level); err != nil {
+func (h *slogHandler) SetLevel(level handler.LogLevel) error {
+	if err := h.base.SetLevel(level); err != nil {
 		return err
 	}
 
-	l.lvl.Set(toSlogLevel(level))
+	h.level.Set(levelMapper.Map(level))
 
 	return nil
 }
 
 // SetOutput sets the log destination.
-func (l *slogLogger) SetOutput(w io.Writer) error {
-	return l.out.Swap(w)
+func (h *slogHandler) SetOutput(w io.Writer) error {
+	return h.base.SetOutput(w)
 }
 
 // CallerSkip returns the current number of stack frames being skipped.
-func (l *slogLogger) CallerSkip() int {
-	return l.callerSkip
+func (h *slogHandler) CallerSkip() int {
+	return h.base.CallerSkip()
 }
 
-// WithCallerSkip returns a new Logger instance with the caller skip value updated.
-func (l *slogLogger) WithCallerSkip(skip int) (unilog.Logger, error) {
-	if skip < 0 {
-		return l, unilog.ErrInvalidSourceSkip
+// WithCaller returns a new handler with caller reporting enabled or disabled.
+// It returns the original handler if the enabled value is unchanged.
+func (h *slogHandler) WithCaller(enabled bool) handler.AdvancedHandler {
+	newBase := h.base.WithCaller(enabled)
+	if newBase == h.base {
+		return h
 	}
 
-	if skip == l.callerSkip {
-		return l, nil
-	}
-
-	clone := l.clone()
-	clone.callerSkip = skip
-
-	return clone, nil
+	return h.deepClone(newBase)
 }
 
-// WithCallerSkipDelta returns a new Logger instance with the caller skip value altered by the given delta.
-func (l *slogLogger) WithCallerSkipDelta(delta int) (unilog.Logger, error) {
+// WithTrace returns a new handler that enables or disables stack trace logging.
+// It returns the original handler if the enabled value is unchanged.
+func (h *slogHandler) WithTrace(enabled bool) handler.AdvancedHandler {
+	newBase := h.base.WithTrace(enabled)
+	if newBase == h.base {
+		return h
+	}
+
+	return h.deepClone(newBase)
+}
+
+// WithLevel returns a new handler with a new minimum level applied.
+// It returns the original handler if the level value is unchanged.
+func (h *slogHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler {
+	newBase, err := h.base.WithLevel(level)
+	if err != nil || newBase == h.base {
+		return h
+	}
+
+	return h.deepClone(newBase)
+}
+
+// WithOutput returns a new handler with the output writer set permanently.
+// It returns the original handler if the writer value is unchanged.
+func (h *slogHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
+	newBase, err := h.base.WithOutput(w)
+	if err != nil || newBase == h.base {
+		return h
+	}
+
+	return h.deepClone(newBase)
+}
+
+// WithCallerSkip returns a new handler with the caller skip permanently adjusted.
+// It returns the original handler if the skip value is unchanged.
+func (h *slogHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
+	current := h.base.CallerSkip()
+	if skip == current {
+		return h
+	}
+
+	return h.WithCallerSkipDelta(skip - current)
+}
+
+// WithCallerSkipDelta returns a new handler with the caller skip altered by delta.
+// It returns the original handler if the delta value is zero.
+func (h *slogHandler) WithCallerSkipDelta(delta int) handler.AdvancedHandler {
 	if delta == 0 {
-		return l, nil
+		return h
 	}
 
-	return l.WithCallerSkip(l.callerSkip + delta)
+	newBase, err := h.base.WithCallerSkipDelta(delta)
+	if err != nil {
+		return h
+	}
+
+	return h.deepClone(newBase)
 }
 
-// clone returns a deep copy of the logger.
-func (l *slogLogger) clone() *slogLogger {
-	return &slogLogger{
-		l:          l.l,
-		out:        l.out,
-		lvl:        l.lvl,
-		withTrace:  l.withTrace,
-		withCaller: l.withCaller,
-		callerSkip: l.callerSkip,
+// clone returns a shallow copy of the handler.
+func (h *slogHandler) clone() *slogHandler {
+	return &slogHandler{
+		base:       h.base,
+		logger:     h.logger,
+		level:      h.level,
+		handler:    h.handler,
+		withCaller: h.withCaller,
+		withTrace:  h.withTrace,
 	}
 }
 
-// Clone returns a deep copy of the logger as a unilog.Logger.
-func (l *slogLogger) Clone() unilog.Logger {
-	return l.clone()
-}
+// deepClone returns a deep copy of the logger with a new BaseHandler.
+func (h *slogHandler) deepClone(base *handler.BaseHandler) *slogHandler {
+	levelVar := new(slog.LevelVar)
+	levelVar.Set(levelMapper.Map(base.Level()))
 
-// Trace logs a message at the trace level.
-func (l *slogLogger) Trace(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.TraceLevel, msg, 0, keyValues...)
-}
-
-// Debug logs a message at the debug level.
-func (l *slogLogger) Debug(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.DebugLevel, msg, 0, keyValues...)
-}
-
-// Info logs a message at the info level.
-func (l *slogLogger) Info(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.InfoLevel, msg, 0, keyValues...)
-}
-
-// Warn logs a message at the warn level.
-func (l *slogLogger) Warn(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.WarnLevel, msg, 0, keyValues...)
-}
-
-// Error logs a message at the error level.
-func (l *slogLogger) Error(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.ErrorLevel, msg, 0, keyValues...)
-}
-
-// Critical logs a message at the critical level.
-func (l *slogLogger) Critical(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.CriticalLevel, msg, 0, keyValues...)
-}
-
-// Fatal logs a message at the fatal level and exits the process.
-func (l *slogLogger) Fatal(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.FatalLevel, msg, 0, keyValues...)
-}
-
-// Panic logs a message at the panic level and panics.
-func (l *slogLogger) Panic(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.PanicLevel, msg, 0, keyValues...)
-}
-
-func toSlogLevel(level unilog.LogLevel) slog.Level {
-	level = min(max(level, unilog.MinLevel), unilog.MaxLevel)
-
-	switch level {
-	case unilog.TraceLevel:
-		return slog.Level(-8)
-	case unilog.DebugLevel:
-		return slog.LevelDebug
-	case unilog.InfoLevel:
-		return slog.LevelInfo
-	case unilog.WarnLevel:
-		return slog.LevelWarn
-	case unilog.ErrorLevel:
-		return slog.LevelError
-	case unilog.CriticalLevel:
-		return slog.Level(12)
-	case unilog.FatalLevel:
-		return slog.Level(16)
-	case unilog.PanicLevel:
-		return slog.Level(20)
-	default:
-		return slog.LevelInfo
+	handlerOpts := &slog.HandlerOptions{
+		Level:     levelVar,
+		AddSource: base.CallerEnabled(),
 	}
+
+	var sh slog.Handler
+	if base.Format() == "text" {
+		sh = slog.NewTextHandler(base.AtomicWriter(), handlerOpts)
+	} else {
+		sh = slog.NewJSONHandler(base.AtomicWriter(), handlerOpts)
+	}
+
+	return &slogHandler{
+		base:       base,
+		logger:     slog.New(sh),
+		level:      levelVar,
+		handler:    sh,
+		withCaller: base.CallerEnabled(),
+		withTrace:  base.TraceEnabled(),
+	}
+}
+
+// keyValuesToSlogAttrs transforms keyValues to slog.Attrs.
+func keyValuesToSlogAttrs(keyValues []any) []slog.Attr {
+	n := len(keyValues)
+	attrCount := n / 2
+
+	if attrCount == 0 {
+		return nil
+	}
+
+	// Stack-allocate for common case (≤4 attributes)
+	var stackAttrs [4]slog.Attr
+	var attrs []slog.Attr
+	if attrCount <= 4 {
+		attrs = stackAttrs[:0]
+	} else {
+		attrs = make([]slog.Attr, 0, attrCount)
+	}
+
+	for i := 0; i < n-1; i += 2 {
+		key, ok := keyValues[i].(string)
+		if !ok {
+			key = fmt.Sprint(keyValues[i])
+		}
+		attrs = append(attrs, slog.Any(key, keyValues[i+1]))
+	}
+
+	return attrs
 }
