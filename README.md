@@ -8,46 +8,38 @@
 
 # unilog
 
-*A lightweight and idiomatic Go library to offer a unified logger interface.*
+*A unified logging interface for Go applications.*
 
-## 🤔 Why unilog?
+Stop rewriting logging code when switching backends. Write once against `unilog.Logger`, swap implementations without touching application logic.
 
-In a large Go application or a reusable library, coupling directly to a specific logging library creates vendor lock-in. If you decide to switch from `zerolog` to `slog`, you would have to refactor every logging call site in your project.
+## Why unilog?
 
-`go-unilog` solves this by providing a standardized `Logger` interface. Your application code only interacts with this interface. Behind the scenes, an adapter translates calls from the `unilog.Logger` interface to the specific API of your chosen logging library. This means you can swap out the underlying logger at any time, in one central place, without rewriting your application code.
+**Problem**: Direct coupling to logging libraries creates vendor lock-in. Switching from `zerolog` to `slog` requires refactoring every log call site.
 
-Perfect for use in:
+**Solution**: A standardized interface with pluggable adapters. Application code stays unchanged; swap the underlying logger in one place.
 
-  - **Libraries**: Allow consumers of your library to integrate your module's logs seamlessly into their application's existing logging infrastructure.
-  - **Large Applications & Microservices**: Enforce a consistent logging interface across your entire codebase, even if different services or teams have different preferences for logging libraries.
-  - **Projects in Flux**: Start with the simple built-in logger and switch to a more powerful, structured logger like `zap` or `slog` as your project's needs evolve, without the headache of a major refactor.
+Perfect for:
 
-## ✨ Features
+- **Libraries**: Let consumers integrate your logs into their existing infrastructure
+- **Large Applications**: Enforce consistent logging across teams with different library preferences
+- **Evolving Projects**: Start simple, upgrade to high-performance loggers without refactoring
 
-  - **Unified Interface**: A single, easy-to-use `Logger` interface for all your logging needs.
-  - **Adapter-Based**: Pluggable adapters for popular logging libraries including `slog`, `zap`, `logrus`, `zerolog`, and the standard `log` package.
-  - **Structured Logging**: Encourages best practices with structured, key-value pair logging.
-  - **Leveled Logging**: Supports standard log levels: `Debug`, `Info`, `Warn`, `Error`, `Critical`, and `Fatal`.
-  - **Context-Aware**: Pass `context.Context` through your application for request-scoped logging.
-  - **Minimal Core Dependencies**: The core `unilog` API has zero third-party dependencies, making it safe to use in libraries. The default fallback logger has one small internal dependency for thread-safe writes.
-  - **Panic-Safe**: Includes a fallback logger that ensures `unilog.Info()` and other package-level functions never panic, even if no logger is configured.
+## Quick Start
 
-## 📌 Installation
+### Installation
 
 ```bash
 go get github.com/balinomad/go-unilog@latest
 ```
 
-## 🚀 Basic Usage
-
-Placeholder for an example with the built-in `slog` adapter.
+### Basic Usage
 
 ```go
 package main
 
 import (
 	"context"
-	"errors"
+    "os"
 
 	"github.com/balinomad/go-unilog"
 	"github.com/balinomad/go-unilog/handler/slog"
@@ -55,286 +47,281 @@ import (
 
 func main() {
 	ctx := context.Background()
-	logger := slog.New(WithOutput(os.Stderr), WithFormat(slog.FormatJSON), WithCaller(true))
 
-	unilog.SetDefault(logger)
+    // Create handler (slog in this example)
+    handler, _ := slog.New(
+        slog.WithOutput(os.Stderr),
+        slog.WithFormat("json"),
+        slog.WithLevel(unilog.InfoLevel),
+    )
 
-	err := doSomething(ctx)
-	if err != nil {
-		unilog.Error(ctx, "failed to do something", unilog.Error(err))
-		return
-	}
+    // Wrap in unilog.Logger
+    logger, _ := unilog.NewLogger(handler)
 
-	unilog.Info(ctx, "did something")
-}
+    // Log structured data
+    logger.Info(ctx, "server started",
+        "port", 8080,
+        "env", "production")
 
-func doSomething(ctx context.Context) error {
-	unilog.Debug(ctx, "trying to do something")
-	// simulate some work
-	time.Sleep(100 * time.Millisecond)
-	return nil
+    logger.Error(ctx, "database connection failed",
+        "host", "db.example.com",
+        "retry_count", 3)
 }
 ```
 
-## 📘 API Reference
+## Choosing a Handler
 
-### The `Logger` Interface
+| Handler | Best For | Performance | Features |
+|---------|----------|-------------|----------|
+| **[slog](handler/slog/)** | Standard library users, new projects | Good | Native caller, groups, context |
+| **[zap](handler/zap/)** | High-throughput services | Excellent | Zero-alloc, buffered, full feature set |
+| **[stdlog](handler/stdlog/)** | Simple applications, stdlib-only | Moderate | Minimal dependencies |
 
-| Function | Description |
-| -------- | ----------- |
-| `Logger.Log(ctx, level, msg, ...any)` | The generic logging method. All other level methods call this. |
-| `Logger.Trace(ctx, msg, ...any)` | Logs a message at the TRACE level. |
-| `Logger.Debug(ctx, msg, ...any)` | Logs a message at the DEBUG level. |
-| `Logger.Info(ctx, msg, ...any)` | Logs a message at the INFO level. |
-| `Logger.Warn(ctx, msg, ...any)` | Logs a message at the WARN level. |
-| `Logger.Error(ctx, msg, ...any)` | Logs a message at the ERROR level. |
-| `Logger.Critical(ctx, msg, ...any)` | Logs a message at the CRITICAL level. |
-| `Logger.Fatal(ctx, msg, ...any)` | Logs a message at the FATAL level and exits the process. |
-| `Logger.Panic(ctx, msg, ...any)` | Logs a message at the PANIC level and panics. |
-| `Logger.Enabled(level)` | Returns true if the given log level is enabled. |
-| `Logger.With(...any)` | Returns a new logger with the provided key-value pairs always included. |
-| `Logger.WithGroup(name)` | Returns a new logger that starts a new group with the provided name. |
+**In Development**: zerolog, logrus, log15 (handlers will be rewritten)
 
-### Package-level Functions
+See [Handler Comparison Matrix](docs/HANDLERS.md) for detailed feature analysis.
 
-| Function | Description |
-| -------- | ----------- |
-| `unilog.Default()` | Returns the default logger. |
-| `unilog.SetDefault(logger)` | Sets the default logger. |
-| `unilog.WithLogger(ctx, logger)` | Returns a new context with the provided logger. |
-| `unilog.LoggerFromContext(ctx)` | Returns the logger from the context. |
-| `unilog.Log(ctx, level, msg, ...any)` | Logs a message at the given level using the default logger. |
-| `unilog.Trace(ctx, msg, ...any)` | Logs a message at the TRACE level using the default logger. |
-| `unilog.Info(ctx, msg, ...any)` | Logs a message at the INFO level using the default logger. |
-| `unilog.Debug(ctx, msg, ...any)` | Logs a message at the DEBUG level using the default logger. |
-| `unilog.Warn(ctx, msg, ...any)` | Logs a message at the WARN level using the default logger. |
-| `unilog.Error(ctx, msg, ...any)` | Logs a message at the ERROR level using the default logger. |
-| `unilog.Critical(ctx, msg, ...any)` | Logs a message at the CRITICAL level using the default logger. |
-| `unilog.Fatal(ctx, msg, ...any)` | Logs a message at the FATAL level using the default logger and exits the process. |
-| `unilog.Panic(ctx, msg, ...any)` | Logs a message at the PANIC level using the default logger and panics. |
-| `unilog.LogWithSkip(ctx, level, msg, skip, ...any)` | Logs a message at the given level using the default logger, skipping the given number of stack frames if supported. |
+## Core Concepts
 
-### `Configurator` for Loggers with Dynamic Reconfiguration
+### Structured Logging
 
-| Function | Description |
-| -------- | ----------- |
-| `Configurator.SetLevel(level)` | Sets the minimum enabled log level for a logger. |
-| `Configurator.SetOutput(writer)` | Changes the log output destination for a logger. |
-
-### `CallerSkipper` for Loggers with Advanced Caller Reporting
-
-| Function | Description |
-| -------- | ----------- |
-| `CallerSkipper.LogWithSkip(ctx, level, msg, skip, ...any)` | Logs a message at the given level, skipping the given number of stack frames. |
-| `CallerSkipper.CallerSkip()` | Returns the current number of stack frames skipped when stack traces are logged. |
-| `CallerSkipper.WithCallerSkip(skip)` | Returns a new `Logger` with the caller skip set. |
-| `CallerSkipper.WithCallerSkipDelta(delta)` | Returns a new `Logger` with caller skip adjusted by delta. |
-
-### `Cloner` for Loggers with Deep Cloning
-
-| Function | Description |
-| -------- | ----------- |
-| `Cloner.Clone()` | Returns a deep copy of the logger. |
-
-### `Syncer` for Loggers with Buffered Logging
-
-| Function | Description |
-| -------- | ----------- |
-| `Syncer.Sync()` | Flushes any buffered log entries. |
-
-### `LogLevel` is a Type Representing Log Severity Levels
-
-Levels: `TraceLevel`, `DebugLevel`, `InfoLevel`, `WarnLevel`, `ErrorLevel`, `CriticalLevel`, `FatalLevel`, and `PanicLevel`
-
-| Function | Description |
-| -------- | ----------- |
-| `LogLevel.String()` | Returns a human-readable representation of the log level. |
-| `unilog.ParseLevel(levelStr)` | Converts a string to a `LogLevel`. |
-| `unilog.IsValidLogLevel(level)` | Returns true if the given log level is valid. |
-| `unilog.ValidateLogLevel(level)` | Returns an error if the given log level is invalid. |
-
-## 🔧 Advanced Example
-
-### Implementing a Custom Adapter
-
-The true power of `go-unilog` is its ability to adapt to any logging library, including your own custom or in-house solutions. To do this, you simply need to create a new adapter that satisfies the `unilog.Logger` interface.
-
-Below is a complete, self-contained example of creating an adapter for a fictional, minimalistic logger called `minlog`.
+Always log key-value pairs for machine-readable output:
 
 ```go
-package main
+// Good: structured
+logger.Info(ctx, "user registered", "user_id", 12345, "email", "user@example.com")
 
-import (
-	"context"
-	"fmt"
-	"io"
-	"os"
-	"strings"
-	"sync"
+// Avoid: unstructured string formatting
+logger.Info(ctx, fmt.Sprintf("User %d registered: %s", 12345, "user@example.com"))
+```
 
-	"github.com/balinomad/go-unilog"
-)
+### Context Propagation
 
-// --- Step 1: Define Your Custom Logger ---
+Pass `context.Context` for request-scoped logging and cancellation awareness:
 
-// This is the logger we want to adapt. It's a simple logger that doesn't
-// conform to any standard interface.
-type minlog struct {
-	mu sync.Mutex
-	w  io.Writer
+```go
+func HandleRequest(ctx context.Context, logger unilog.Logger) {
+    // Context canceled? Logging is skipped automatically
+    logger.Info(ctx, "processing request", "request_id", ctx.Value("request_id"))
 }
+```
 
-// Log writes a simple formatted string.
-func (l *minlog) Log(msg string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	fmt.Fprintln(l.w, msg)
+### Log Levels
+
+| Level | Use Case | Examples |
+|-------|----------|----------|
+| `Trace` | Fine-grained debugging | Function entry/exit, loop iterations |
+| `Debug` | Development diagnostics | SQL queries, cache hits |
+| `Info` | Normal operations | Server started, request completed |
+| `Warn` | Recoverable issues | Deprecated API used, retry attempts |
+| `Error` | Failure requiring attention | Database timeout, invalid input |
+| `Critical` | Severe degradation | Service unavailable, data corruption |
+| `Fatal` | Unrecoverable, exits process | Configuration missing, startup failure |
+
+## Advanced Usage
+
+### Chaining Attributes
+
+Avoid repeating common fields:
+
+```go
+// Add service-level context
+serviceLogger := logger.With("service", "api", "version", "v1.2.3")
+
+// Add request-level context
+requestLogger := serviceLogger.With("request_id", "abc-123", "user_id", 456)
+
+// All subsequent logs include service + request context
+requestLogger.Info(ctx, "request processed", "duration_ms", 42)
+// Output: {"level":"INFO","msg":"request processed","service":"api","version":"v1.2.3","request_id":"abc-123","user_id":456,"duration_ms":42}
+```
+
+### Grouping Attributes
+
+Organize related fields hierarchically:
+
+```go
+dbLogger := logger.WithGroup("database")
+dbLogger.Info(ctx, "query executed",
+    "query", "SELECT * FROM users",
+    "duration_ms", 15)
+// Output: {"level":"INFO","msg":"query executed","database":{"query":"SELECT * FROM users","duration_ms":15}}
+```
+
+### Dynamic Configuration
+
+Change log level at runtime (handler must support `Configurator` interface):
+
+```go
+// Production: INFO level
+logger.SetLevel(unilog.InfoLevel)
+
+// Debug incident: enable DEBUG temporarily
+logger.SetLevel(unilog.DebugLevel)
+```
+
+### Default Logger
+
+Use package-level functions for simple cases:
+
+```go
+func init() {
+    handler, _ := slog.New(slog.WithLevel(unilog.DebugLevel))
+    logger, _ := unilog.NewLogger(handler)
+    unilog.SetDefault(logger)
 }
-
-// --- Step 2: Create the Adapter ---
-
-// The adapter will wrap `minlog` and implement the `unilog.Logger` interface.
-type minlogAdapter struct {
-	logger *minlog
-	level  unilog.LogLevel
-	fields []any // For storing fields from With()
-}
-
-// NewMinlogAdapter creates a new adapter.
-func NewMinlogAdapter(logger *minlog, level unilog.LogLevel) *minlogAdapter {
-	return &minlogAdapter{
-		logger: logger,
-		level:  level,
-	}
-}
-
-// --- Step 3: Implement the unilog.Logger Interface ---
-
-// Log is the core method that translates unilog calls to minlog calls.
-func (a *minlogAdapter) Log(_ context.Context, level unilog.LogLevel, msg string, keyValues ...any) {
-	if !a.Enabled(level) {
-		return
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("[%s] %s", level, msg))
-
-	// Combine fields from With() and the current call.
-	allFields := append(a.fields, keyValues...)
-
-	for i := 0; i < len(allFields); i += 2 {
-		key := allFields[i]
-		var val any = "(no value)"
-		if i+1 < len(allFields) {
-			val = allFields[i+1]
-		}
-		sb.WriteString(fmt.Sprintf(" %v=%v", key, val))
-	}
-
-	a.logger.Log(sb.String())
-
-	switch level {
-	case unilog.FatalLevel:
-		os.Exit(1)
-	case unilog.PanicLevel:
-		panic(msg)
-	}
-}
-
-// Enabled checks if a given log level is active.
-func (a *minlogAdapter) Enabled(level unilog.LogLevel) bool {
-	return level >= a.level
-}
-
-// With returns a new adapter instance with the added fields.
-func (a *minlogAdapter) With(keyValues ...any) unilog.Logger {
-	newAdapter := &minlogAdapter{
-		logger: a.logger,
-		level:  a.level,
-		// Create a new slice and copy fields to ensure immutability.
-		fields: make([]any, len(a.fields)+len(keyValues)),
-	}
-	copy(newAdapter.fields, a.fields)
-	copy(newAdapter.fields[len(a.fields):], keyValues)
-	return newAdapter
-}
-
-// WithGroup is a simplified implementation for this example.
-func (a *minlogAdapter) WithGroup(name string) unilog.Logger {
-	// A real implementation would prefix subsequent keys.
-	// For this example, we'll just add a group field.
-	return a.With("group", name)
-}
-
-// Implement the convenience methods by calling Log.
-func (a *minlogAdapter) Trace(ctx context.Context, msg string, keyValues ...any) {
-	a.Log(ctx, unilog.TraceLevel, msg, keyValues...)
-}
-func (a *minlogAdapter) Debug(ctx context.Context, msg string, keyValues ...any) {
-	a.Log(ctx, unilog.DebugLevel, msg, keyValues...)
-}
-func (a *minlogAdapter) Info(ctx context.Context, msg string, keyValues ...any) {
-	a.Log(ctx, unilog.InfoLevel, msg, keyValues...)
-}
-func (a *minlogAdapter) Warn(ctx context.Context, msg string, keyValues ...any) {
-	a.Log(ctx, unilog.WarnLevel, msg, keyValues...)
-}
-func (a *minlogAdapter) Error(ctx context.Context, msg string, keyValues ...any) {
-	a.Log(ctx, unilog.ErrorLevel, msg, keyValues...)
-}
-func (a *minlogAdapter) Critical(ctx context.Context, msg string, keyValues ...any) {
-	a.Log(ctx, unilog.CriticalLevel, msg, keyValues...)
-}
-func (a *minlogAdapter) Fatal(ctx context.Context, msg string, keyValues ...any) {
-	a.Log(ctx, unilog.FatalLevel, msg, keyValues...)
-}
-func (a *minlogAdapter) Panic(ctx context.Context, msg string, keyValues ...any) {
-	a.Log(ctx, unilog.PanicLevel, msg, keyValues...)
-}
-
-// --- Step 4: Use Your New Adapter ---
 
 func main() {
-	// Instantiate your custom logger.
-	customLogger := &minlog{w: os.Stdout}
+    ctx := context.Background()
+    unilog.Info(ctx, "using default logger")
+}
+```
 
-	// Create an instance of your new adapter.
-	adapter := NewMinlogAdapter(customLogger, unilog.InfoLevel)
+## Handler-Specific Examples
 
-	// Set it as the default unilog logger.
-	unilog.SetDefault(adapter)
+### slog (Standard Library)
 
-	// All package-level calls now go through your adapter.
-	fmt.Println("--- Logging with the custom adapter ---")
-	unilog.Info(context.Background(), "User logged in", "user_id", 123)
-	unilog.Warn(context.Background(), "API limit approaching", "remaining", 5)
+```go
+import "github.com/balinomad/go-unilog/handler/slog"
 
-	// Demonstrate the With() method.
-	requestLogger := unilog.Default().With("request_id", "abc-123")
-	requestLogger.Info(context.Background(), "Processing request")
-	requestLogger.Error(context.Background(), "Failed to fetch data", "url", "/api/data")
+handler, _ := slog.New(
+    slog.WithOutput(os.Stdout),
+    slog.WithFormat("text"),        // or "json"
+    slog.WithLevel(unilog.DebugLevel),
+    slog.WithCaller(true),          // Include source location
+)
+```
+
+### zap (High Performance)
+
+```go
+import "github.com/balinomad/go-unilog/handler/zap"
+
+handler, _ := zap.New(
+    zap.WithOutput(os.Stdout),
+    zap.WithLevel(unilog.InfoLevel),
+    zap.WithCaller(true),
+    zap.WithTrace(true),            // Stack traces on errors
+)
+
+// Remember to sync buffered output
+defer logger.Sync()
+```
+
+### stdlog (Minimal Dependencies)
+
+```go
+import "github.com/balinomad/go-unilog/handler/stdlog"
+
+handler, _ := stdlog.New(
+    stdlog.WithOutput(os.Stderr),
+    stdlog.WithLevel(unilog.WarnLevel),
+    stdlog.WithFlags(log.LstdFlags | log.Lshortfile),
+)
+```
+
+See handler-specific README files for detailed configuration options.
+
+## API Reference
+
+### Core Types
+
+- **`Logger`**: Main logging interface (Info, Error, With, WithGroup, etc.)
+- **`AdvancedLogger`**: Extends Logger with immutable configuration methods
+- **`MutableLogger`**: Runtime reconfiguration (SetLevel, SetOutput)
+- **`LogLevel`**: Severity constants (TraceLevel, DebugLevel, InfoLevel, etc.)
+
+### Package Functions
+
+```go
+// Default logger management
+unilog.SetDefault(logger)
+unilog.Default() Logger
+
+// Context integration
+unilog.WithLogger(ctx, logger) context.Context
+unilog.LoggerFromContext(ctx) (Logger, bool)
+unilog.LoggerFromContextOrDefault(ctx) Logger
+
+// Package-level logging (uses default logger)
+unilog.Info(ctx, msg, keyValues...)
+unilog.Error(ctx, msg, keyValues...)
+// ... etc for all levels
+```
+
+Full API documentation: [pkg.go.dev/github.com/balinomad/go-unilog](https://pkg.go.dev/github.com/balinomad/go-unilog)
+
+## Testing
+
+unilog provides no built-in test helpers. For testing:
+
+1. **Mock the interface**: Create a `MockLogger` implementing `unilog.Logger`
+2. **Use in-memory handler**: Configure handler with `bytes.Buffer` as output
+3. **Test handler directly**: Verify `handler.Handle()` behavior
+
+Example mock:
+
+```go
+type MockLogger struct {
+    Calls []LogCall
 }
 
-// Expected output:
-// --- Logging with the custom adapter ---
-// [INFO] User logged in user_id=123
-// [WARN] API limit approaching remaining=5
-// [INFO] Processing request request_id=abc-123
-// [ERROR] Failed to fetch data request_id=abc-123 url=/api/data
+func (m *MockLogger) Info(ctx context.Context, msg string, keyValues ...any) {
+    m.Calls = append(m.Calls, LogCall{Level: InfoLevel, Msg: msg, KVs: keyValues})
+}
+// ... implement other methods
 ```
 
-## 🧪 Testing
+## Performance
 
-Run tests with:
-```bash
-go test -v ./...
-```
+unilog adds minimal overhead to underlying loggers. Preliminary observations (formal benchmarks pending):
 
-Run benchmarks with:
-```bash
-go test -bench=. -benchmem ./...
-```
+- **slog**: ~5-10ns per log call
+- **zap**: ~3-7ns per log call
+- **stdlog**: ~8-12ns per log call
 
-## ⚖️ License
+Performance characteristics:
+- Zero allocations in hot path when handler supports it
+- Lock-free level checks
+- Context cancellation short-circuits before allocation
 
-MIT License — see `LICENSE` file for details.
+Comprehensive benchmarks will be published when all handlers are finalized.
+
+## Documentation
+
+- [Handler Comparison](docs/HANDLERS.md) - Feature matrix, performance, use cases
+- [Architecture](docs/ARCHITECTURE.md) - System design, handler contract
+- [Handler Development](docs/HANDLER_DEVELOPMENT.md) - Implement custom handlers
+- [Compatibility](docs/COMPATIBILITY.md) - Version policy, deprecation rules
+- [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues, debugging
+
+## Contributing
+
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- Code standards and review process
+- How to add new handlers
+- Testing requirements
+- Pull request guidelines
+
+## Stability
+
+- **Core API**: Stable, follows semantic versioning
+- **Handler API**: Stable, follows semantic versioning
+- **Handler Implementations**: slog, zap, stdlog are stable; others under rewrite
+
+Breaking changes only on major version bumps. See [COMPATIBILITY.md](docs/COMPATIBILITY.md) for details.
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## Alternatives
+
+Why not use these directly?
+
+- **slog**: Requires Go 1.21+, limited to stdlib features
+- **zap**: High-performance but complex configuration
+- **zerolog**: Zero-allocation focus may not suit all use cases
+- **logrus**: Popular but slower, hooks add complexity
+
+unilog lets you choose the best backend for each component without rewriting application code.
