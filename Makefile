@@ -47,5 +47,5 @@ examples:
 tidy:
 	@find . -name go.mod -execdir bash -lc 'printf "%s %s\n" "->" "$$PWD"; \
 		go clean -modcache || true; \
-		go get github.com/balinomad/go-unilog@latest || true; \
+		go get -u ./... || true; \
 		go mod tidy || true' \;
