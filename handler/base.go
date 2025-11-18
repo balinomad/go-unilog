@@ -70,6 +70,9 @@ func WithOutput(w io.Writer) BaseOption {
 // WithFormat sets the output format.
 func WithFormat(format string) BaseOption {
 	return func(o *BaseOptions) error {
+		if len(o.ValidFormats) > 0 && !slices.Contains(o.ValidFormats, format) {
+			return NewOptionApplyError("WithFormat", NewInvalidFormatError(format, o.ValidFormats))
+		}
 		o.Format = format
 		return nil
 	}
@@ -274,13 +277,6 @@ func (h *BaseHandler) AtomicWriter() *atomicwriter.AtomicWriter {
 	return h.out
 }
 
-// HandlerState returns this BaseHandler as a HandlerState.
-// Methods on the returned interface are thread-safe snapshots.
-// State may change between calls.
-func (h *BaseHandler) HandlerState() HandlerState {
-	return h
-}
-
 // --- Flag Management (Lock-Free) ---
 
 // HasFlag checks if flag is set (lock-free).
@@ -342,19 +338,6 @@ func (h *BaseHandler) SetCallerSkip(skip int) error {
 
 	h.mu.Lock()
 	h.callerSkip = skip
-	h.mu.Unlock()
-
-	return nil
-}
-
-// SetSeparator changes the separator used for key prefixes (default: "_").
-// Affects all instances sharing this base.
-func (h *BaseHandler) SetSeparator(sep string) error {
-	if len(sep) > 16 {
-		return errors.New("separator too long: max 16 bytes")
-	}
-	h.mu.Lock()
-	h.separator = sep
 	h.mu.Unlock()
 
 	return nil

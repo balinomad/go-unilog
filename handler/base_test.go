@@ -340,21 +340,6 @@ func TestBaseHandler_StateAccessors(t *testing.T) {
 	if h.AtomicWriter() == nil {
 		t.Error("AtomicWriter() = nil, want non-nil")
 	}
-	if h.HandlerState() == nil {
-		t.Error("HandlerState() = nil, want non-nil")
-	}
-
-	// Test HandlerState interface compliance
-	var hs handler.HandlerState = h.HandlerState()
-	if got := hs.CallerEnabled(); got != true {
-		t.Errorf("HandlerState.CallerEnabled() = %v, want %v", got, true)
-	}
-	if got := hs.TraceEnabled(); got != false {
-		t.Errorf("HandlerState.TraceEnabled() = %v, want %v", got, false)
-	}
-	if got := hs.CallerSkip(); got != 2 {
-		t.Errorf("HandlerState.CallerSkip() = %v, want %v", got, 2)
-	}
 }
 
 // TestBaseHandler_Enabled verifies the Enabled method logic.
@@ -582,34 +567,6 @@ func TestBaseHandler_SetCallerSkip(t *testing.T) {
 	})
 }
 
-func TestBaseHandler_SetSeparator(t *testing.T) {
-	t.Parallel()
-
-	t.Run("success", func(t *testing.T) {
-		t.Parallel()
-		h := newHandler(t, &handler.BaseOptions{Output: io.Discard, Separator: "_"})
-		if err := h.SetSeparator("::"); err != nil {
-			t.Fatalf("SetSeparator(::) error = %v, want nil", err)
-		}
-		if got := h.Separator(); got != "::" {
-			t.Errorf("Separator() = %q, want %q", got, "::")
-		}
-	})
-
-	t.Run("invalid too long", func(t *testing.T) {
-		t.Parallel()
-		h := newHandler(t, &handler.BaseOptions{Output: io.Discard, Separator: "_"})
-		longSep := "12345678901234567"
-		err := h.SetSeparator(longSep)
-		if err == nil {
-			t.Fatalf("SetSeparator(%q) error = nil, want non-nil", longSep)
-		}
-		if got := h.Separator(); got != "_" {
-			t.Errorf("Separator() = %q, want %q (should not change on error)", got, "_")
-		}
-	})
-}
-
 // TestBaseHandler_MutableSetters_Concurrent verifies setters are thread-safe.
 func TestBaseHandler_MutableSetters_Concurrent(t *testing.T) {
 	t.Parallel()
@@ -642,15 +599,6 @@ func TestBaseHandler_MutableSetters_Concurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_ = h.SetCallerSkip(i)
-		}()
-		// SetSeparator
-		go func() {
-			defer wg.Done()
-			if i%2 == 0 {
-				_ = h.SetSeparator(".")
-			} else {
-				_ = h.SetSeparator("_")
-			}
 		}()
 	}
 	wg.Wait()
