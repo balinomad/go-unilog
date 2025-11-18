@@ -81,10 +81,12 @@ type slogHandler struct {
 
 // Ensure slogLogger implements the following interfaces.
 var (
-	_ handler.Handler         = (*slogHandler)(nil)
-	_ handler.Chainer         = (*slogHandler)(nil)
-	_ handler.AdvancedHandler = (*slogHandler)(nil)
-	_ handler.Configurator    = (*slogHandler)(nil)
+	_ handler.Handler        = (*slogHandler)(nil)
+	_ handler.Chainer        = (*slogHandler)(nil)
+	_ handler.Configurable   = (*slogHandler)(nil)
+	_ handler.CallerAdjuster = (*slogHandler)(nil)
+	_ handler.FeatureToggler = (*slogHandler)(nil)
+	_ handler.MutableConfig  = (*slogHandler)(nil)
 )
 
 // levelMapper maps unilog log levels to slog log levels.
@@ -243,7 +245,7 @@ func (h *slogHandler) CallerSkip() int {
 
 // WithCaller returns a new handler with caller reporting enabled or disabled.
 // It returns the original handler if the enabled value is unchanged.
-func (h *slogHandler) WithCaller(enabled bool) handler.AdvancedHandler {
+func (h *slogHandler) WithCaller(enabled bool) handler.FeatureToggler {
 	newBase := h.base.WithCaller(enabled)
 	if newBase == h.base {
 		return h
@@ -254,7 +256,7 @@ func (h *slogHandler) WithCaller(enabled bool) handler.AdvancedHandler {
 
 // WithTrace returns a new handler that enables or disables stack trace logging.
 // It returns the original handler if the enabled value is unchanged.
-func (h *slogHandler) WithTrace(enabled bool) handler.AdvancedHandler {
+func (h *slogHandler) WithTrace(enabled bool) handler.FeatureToggler {
 	newBase := h.base.WithTrace(enabled)
 	if newBase == h.base {
 		return h
@@ -265,7 +267,7 @@ func (h *slogHandler) WithTrace(enabled bool) handler.AdvancedHandler {
 
 // WithLevel returns a new handler with a new minimum level applied.
 // It returns the original handler if the level value is unchanged.
-func (h *slogHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler {
+func (h *slogHandler) WithLevel(level handler.LogLevel) handler.Configurable {
 	newBase, err := h.base.WithLevel(level)
 	if err != nil || newBase == h.base {
 		return h
@@ -276,7 +278,7 @@ func (h *slogHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler 
 
 // WithOutput returns a new handler with the output writer set permanently.
 // It returns the original handler if the writer value is unchanged.
-func (h *slogHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
+func (h *slogHandler) WithOutput(w io.Writer) handler.Configurable {
 	newBase, err := h.base.WithOutput(w)
 	if err != nil || newBase == h.base {
 		return h
@@ -287,7 +289,7 @@ func (h *slogHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
 
 // WithCallerSkip returns a new handler with the caller skip permanently adjusted.
 // It returns the original handler if the skip value is unchanged.
-func (h *slogHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
+func (h *slogHandler) WithCallerSkip(skip int) handler.CallerAdjuster {
 	current := h.base.CallerSkip()
 	if skip == current {
 		return h
@@ -298,7 +300,7 @@ func (h *slogHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
 
 // WithCallerSkipDelta returns a new handler with the caller skip altered by delta.
 // It returns the original handler if the delta value is zero.
-func (h *slogHandler) WithCallerSkipDelta(delta int) handler.AdvancedHandler {
+func (h *slogHandler) WithCallerSkipDelta(delta int) handler.CallerAdjuster {
 	if delta == 0 {
 		return h
 	}

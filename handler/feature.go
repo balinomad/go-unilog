@@ -48,10 +48,10 @@ const (
 	// Passes context to backend (uses ctx in Handle)
 	FeatContextPropagation
 
-	// Supports SetLevel (implements Configurator)
+	// Supports SetLevel (implements MutableConfig)
 	FeatDynamicLevel
 
-	// Supports SetOutput (implements Configurator)
+	// Supports SetOutput (implements MutableConfig)
 	FeatDynamicOutput
 
 	// --- Performance characteristics ---

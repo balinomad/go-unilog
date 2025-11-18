@@ -10,7 +10,7 @@ A **handler** adapts a third-party logging library to the `handler.Handler` inte
 - Convert log levels (unilog → backend)
 - Transform key-value pairs to backend format
 - Manage backend lifecycle (initialization, output swapping)
-- Optionally implement advanced interfaces (Chainer, Configurator, Syncer)
+- Optionally implement advanced interfaces (Chainer, MutableConfig, Syncer)
 
 **What handlers don't do:**
 - Implement logging logic (delegate to backend)
@@ -285,7 +285,7 @@ Enables immutable configuration methods:
 ```go
 var _ handler.AdvancedHandler = (*myHandler)(nil)
 
-func (h *myHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler {
+func (h *myHandler) WithLevel(level handler.LogLevel) handler.Configurable {
     newBase, err := h.base.WithLevel(level)
     if err != nil || newBase == h.base {
         return h
@@ -295,7 +295,7 @@ func (h *myHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler {
     return h.deepClone(newBase)
 }
 
-func (h *myHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
+func (h *myHandler) WithCallerSkip(skip int) handler.CallerAdjuster {
     current := h.base.CallerSkip()
     if skip == current {
         return h
@@ -312,12 +312,12 @@ func (h *myHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
 // Similar for WithOutput, WithCaller, WithTrace, WithCallerSkipDelta
 ```
 
-#### Configurator (If Backend Supports)
+#### MutableConfig (If Backend Supports)
 
 Enables runtime reconfiguration:
 
 ```go
-var _ handler.Configurator = (*myHandler)(nil)
+var _ handler.MutableConfig = (*myHandler)(nil)
 
 func (h *myHandler) SetLevel(level handler.LogLevel) error {
     if err := h.base.SetLevel(level); err != nil {

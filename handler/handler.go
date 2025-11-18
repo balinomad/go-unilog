@@ -67,63 +67,55 @@ type Chainer interface {
 	WithGroup(name string) Chainer
 }
 
-// AdvancedHandler extends Handler with immutable configuration methods.
+// Configurable is an immutable interface for handlers to expose configuration.
 //
-// IMPORTANT: AdvancedHandler methods return NEW handlers that are
-// INDEPENDENT from the parent. Mutations (SetLevel, SetOutput) on the
-// new handler do NOT affect the parent.
-//
-// Use these methods when you need:
-//   - Module-specific log levels
-//   - Different output destinations per component
-//   - Isolated configuration changes
-//
-// Example:
-//
-//	dbLogger := logger.WithLevel(Debug)  // Independent
-//	dbLogger.SetLevel(Info)              // Only affects dbLogger
-//	logger.Enabled(Debug)                // Still original level
-//
-// These methods mirror the 'With...' methods on the unilog.AdvancedLogger.
-// Implementations return new AdvancedHandler instances (deep copy semantics).
-type AdvancedHandler interface {
-	Handler
-
-	// WithLevel returns a new AdvancedHandler with a new minimum level applied.
+// Implementations return new Configurable instances (shallow copy semantics).
+type Configurable interface {
+	// WithLevel returns a new Configurable with a new minimum level applied.
 	// It returns the original handler if the level value is unchanged.
-	WithLevel(level LogLevel) AdvancedHandler
+	WithLevel(level LogLevel) Configurable
 
-	// WithOutput returns a new AdvancedHandler with the output writer set permanently.
+	// WithOutput returns a new Configurable with the output writer set permanently.
 	// It returns the original handler if the writer value is unchanged.
-	WithOutput(w io.Writer) AdvancedHandler
+	WithOutput(w io.Writer) Configurable
+}
 
-	// WithCallerSkip returns a new AdvancedHandler with the absolute
+// CallerAdjuster is an immutable interface for handlers to expose caller adjustment.
+//
+// Implementations return new CallerAdjuster instances (shallow copy semantics).
+type CallerAdjuster interface {
+	// WithCallerSkip returns a new CallerAdjuster with the absolute
 	// user-visible caller skip set. Negative skip values are clamped to zero.
-	WithCallerSkip(skip int) AdvancedHandler
+	WithCallerSkip(skip int) CallerAdjuster
 
-	// WithCallerSkipDelta returns a new AdvancedHandler with the caller skip
+	// WithCallerSkipDelta returns a new CallerAdjuster with the caller skip
 	// adjusted by delta.
 	// The delta is applied relative to the current skip. Zero delta is a no-op.
 	// If the new skip is negative, it is clamped to zero.
-	WithCallerSkipDelta(delta int) AdvancedHandler
-
-	// WithCaller returns a clone that enables or disables caller resolution.
-	// It returns the original handler if the enabled value is unchanged.
-	// By default, caller resolution is disabled.
-	WithCaller(enabled bool) AdvancedHandler
-
-	// WithTrace returns a new AdvancedHandler that enables or disables trace logging.
-	// It returns the original handler if the enabled value is unchanged.
-	// By default, trace logging is disabled.
-	WithTrace(enabled bool) AdvancedHandler
+	WithCallerSkipDelta(delta int) CallerAdjuster
 }
 
-// Configurator enables mutable runtime reconfiguration of handler settings.
+// FeatureToggler is an immutable interface for handlers to expose feature toggles.
+//
+// Implementations return new FeatureToggler instances (shallow copy semantics).
+type FeatureToggler interface {
+	// WithCaller returns a new FeatureToggler that enables or disables caller resolution.
+	// It returns the original handler if the enabled value is unchanged.
+	// By default, caller resolution is disabled.
+	WithCaller(enabled bool) FeatureToggler
+
+	// WithTrace returns a new FeatureToggler that enables or disables trace logging.
+	// It returns the original handler if the enabled value is unchanged.
+	// By default, trace logging is disabled.
+	WithTrace(enabled bool) FeatureToggler
+}
+
+// MutableConfig enables mutable runtime reconfiguration of handler settings.
 // Implementing this interface implies the Handler is mutable, allowing for
 // high-speed atomic updates (e.g., level changes) without allocations.
 // This performance gain comes at the cost of immutability; implementers
 // must ensure these methods are safe for concurrent use.
-type Configurator interface {
+type MutableConfig interface {
 	// SetLevel changes the minimum log level that will be processed.
 	SetLevel(level LogLevel) error
 

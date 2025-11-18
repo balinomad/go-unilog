@@ -300,7 +300,7 @@ BenchmarkZapDirect-8            275ns ± 1%
 - ✅ `handler.Handler`: Core interface
 - ✅ `handler.Chainer`: WithAttrs, WithGroup
 - ✅ `handler.AdvancedHandler`: WithLevel, WithOutput, WithCallerSkip, etc.
-- ✅ `handler.Configurator`: SetLevel, SetOutput
+- ✅ `handler.MutableConfig`: SetLevel, SetOutput
 - ✅ `handler.Syncer`: Sync (flush buffered output)
 
 ## Critical: Sync Before Exit

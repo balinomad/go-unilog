@@ -94,15 +94,15 @@ type logger struct {
 }
 
 type handlerEntry struct {
-    h         handler.Handler        // core handler
-    ch        handler.Chainer        // if supported
+    h         handler.Handler         // core handler
+    ch        handler.Chainer         // if supported
     adv       handler.AdvancedHandler // if supported
-    cf        handler.Configurator   // if supported
-    snc       handler.Syncer         // if supported
-    state     handler.HandlerState   // handler state snapshot
-    needsPC   bool                   // capture PC for caller?
-    needsSkip bool                   // pass skip to handler?
-    skip      int                    // current skip offset
+    cf        handler.MutableConfig   // if supported
+    snc       handler.Syncer          // if supported
+    state     handler.HandlerState    // handler state snapshot
+    needsPC   bool                    // capture PC for caller?
+    needsSkip bool                    // pass skip to handler?
+    skip      int                     // current skip offset
 }
 ```
 
@@ -197,12 +197,12 @@ type AdvancedHandler interface {
 
 **Use case**: Module-specific log levels without affecting parent logger
 
-#### Configurator
+#### MutableConfig
 
 **Purpose**: Runtime reconfiguration (mutable)
 
 ```go
-type Configurator interface {
+type MutableConfig interface {
     SetLevel(level LogLevel) error
     SetOutput(w io.Writer) error
 }
@@ -508,7 +508,7 @@ if needsPC {
 ### Adding New Handlers
 
 1. Implement `handler.Handler` interface
-2. Optionally implement `Chainer`, `AdvancedHandler`, `Configurator`, `Syncer`
+2. Optionally implement `Chainer`, `AdvancedHandler`, `MutableConfig`, `Syncer`
 3. Use `BaseHandler` for common functionality
 4. Declare features via `Features()`
 5. Write compliance tests

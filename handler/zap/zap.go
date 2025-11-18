@@ -73,11 +73,13 @@ type zapHandler struct {
 
 // Ensure zapHandler implements all interfaces explicitly.
 var (
-	_ handler.Handler         = (*zapHandler)(nil)
-	_ handler.Chainer         = (*zapHandler)(nil)
-	_ handler.AdvancedHandler = (*zapHandler)(nil)
-	_ handler.Configurator    = (*zapHandler)(nil)
-	_ handler.Syncer          = (*zapHandler)(nil)
+	_ handler.Handler        = (*zapHandler)(nil)
+	_ handler.Chainer        = (*zapHandler)(nil)
+	_ handler.Configurable   = (*zapHandler)(nil)
+	_ handler.CallerAdjuster = (*zapHandler)(nil)
+	_ handler.FeatureToggler = (*zapHandler)(nil)
+	_ handler.MutableConfig  = (*zapHandler)(nil)
+	_ handler.Syncer         = (*zapHandler)(nil)
 )
 
 // levelMapper maps unilog log levels to zap log levels.
@@ -249,7 +251,7 @@ func (h *zapHandler) CallerSkip() int {
 
 // WithCaller returns a new handler with caller reporting enabled or disabled.
 // It returns the original handler if the enabled value is unchanged.
-func (h *zapHandler) WithCaller(enabled bool) handler.AdvancedHandler {
+func (h *zapHandler) WithCaller(enabled bool) handler.FeatureToggler {
 	newBase := h.base.WithCaller(enabled)
 	if newBase == h.base {
 		return h
@@ -269,7 +271,7 @@ func (h *zapHandler) WithCaller(enabled bool) handler.AdvancedHandler {
 
 // WithTrace returns a new handler that enables or disables stack trace logging for error-level logs.
 // It returns the original handler if the enabled value is unchanged.
-func (h *zapHandler) WithTrace(enabled bool) handler.AdvancedHandler {
+func (h *zapHandler) WithTrace(enabled bool) handler.FeatureToggler {
 	newBase := h.base.WithTrace(enabled)
 	if newBase == h.base {
 		return h
@@ -289,7 +291,7 @@ func (h *zapHandler) WithTrace(enabled bool) handler.AdvancedHandler {
 
 // WithLevel returns a new Zap handler with a new minimum level applied.
 // It returns the original handler if the level value is unchanged.
-func (h *zapHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler {
+func (h *zapHandler) WithLevel(level handler.LogLevel) handler.Configurable {
 	newBase, err := h.base.WithLevel(level)
 	if err != nil || newBase == h.base {
 		return h
@@ -316,7 +318,7 @@ func (h *zapHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler {
 
 // WithOutput returns a new handler with the output writer set permanently.
 // It returns the original handler if the writer value is unchanged.
-func (h *zapHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
+func (h *zapHandler) WithOutput(w io.Writer) handler.Configurable {
 	_ = h.logger.Sync()
 
 	newBase, err := h.base.WithOutput(w)
@@ -345,7 +347,7 @@ func (h *zapHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
 }
 
 // WithCallerSkip returns a new handler with the caller skip permanently adjusted.
-func (h *zapHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
+func (h *zapHandler) WithCallerSkip(skip int) handler.CallerAdjuster {
 	current := h.base.CallerSkip()
 	if skip == current {
 		return h
@@ -355,7 +357,7 @@ func (h *zapHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
 }
 
 // WithCallerSkipDelta returns a new handler with the caller skip permanently adjusted by delta.
-func (h *zapHandler) WithCallerSkipDelta(delta int) handler.AdvancedHandler {
+func (h *zapHandler) WithCallerSkipDelta(delta int) handler.CallerAdjuster {
 	if delta == 0 {
 		return h
 	}

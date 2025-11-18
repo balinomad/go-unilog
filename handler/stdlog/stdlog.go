@@ -87,10 +87,12 @@ type stdLogHandler struct {
 
 // Ensure stdLogHandler implements the following interfaces.
 var (
-	_ handler.Handler         = (*stdLogHandler)(nil)
-	_ handler.Chainer         = (*stdLogHandler)(nil)
-	_ handler.AdvancedHandler = (*stdLogHandler)(nil)
-	_ handler.Configurator    = (*stdLogHandler)(nil)
+	_ handler.Handler        = (*stdLogHandler)(nil)
+	_ handler.Chainer        = (*stdLogHandler)(nil)
+	_ handler.Configurable   = (*stdLogHandler)(nil)
+	_ handler.CallerAdjuster = (*stdLogHandler)(nil)
+	_ handler.FeatureToggler = (*stdLogHandler)(nil)
+	_ handler.MutableConfig  = (*stdLogHandler)(nil)
 )
 
 // New creates a new handler.Handler instance backed by the standard log.
@@ -124,7 +126,7 @@ func New(opts ...StdLogOption) (handler.Handler, error) {
 	}, nil
 }
 
-// Handle implements the handler.Handler interface for zap.
+// Handle implements the handler.Handler interface for the standard logger.
 func (h *stdLogHandler) Handle(_ context.Context, r *handler.Record) error {
 	if !h.Enabled(r.Level) {
 		return nil
@@ -220,7 +222,7 @@ func (h *stdLogHandler) CallerSkip() int {
 
 // WithCaller returns a new handler with caller reporting enabled or disabled.
 // It returns the original handler if the enabled value is unchanged.
-func (h *stdLogHandler) WithCaller(enabled bool) handler.AdvancedHandler {
+func (h *stdLogHandler) WithCaller(enabled bool) handler.FeatureToggler {
 	newBase := h.base.WithCaller(enabled)
 	if newBase == h.base {
 		return h
@@ -231,7 +233,7 @@ func (h *stdLogHandler) WithCaller(enabled bool) handler.AdvancedHandler {
 
 // WithTrace returns a new handler that enables or disables stack trace logging.
 // It returns the original handler if the enabled value is unchanged.
-func (h *stdLogHandler) WithTrace(enabled bool) handler.AdvancedHandler {
+func (h *stdLogHandler) WithTrace(enabled bool) handler.FeatureToggler {
 	newBase := h.base.WithTrace(enabled)
 	if newBase == h.base {
 		return h
@@ -242,7 +244,7 @@ func (h *stdLogHandler) WithTrace(enabled bool) handler.AdvancedHandler {
 
 // WithLevel returns a new handler with a new minimum level applied.
 // It returns the original handler if the level value is unchanged.
-func (h *stdLogHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandler {
+func (h *stdLogHandler) WithLevel(level handler.LogLevel) handler.Configurable {
 	newBase, err := h.base.WithLevel(level)
 	if err != nil || newBase == h.base {
 		return h
@@ -253,7 +255,7 @@ func (h *stdLogHandler) WithLevel(level handler.LogLevel) handler.AdvancedHandle
 
 // WithOutput returns a new handler with the output writer set permanently.
 // It returns the original handler if the writer value is unchanged.
-func (h *stdLogHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
+func (h *stdLogHandler) WithOutput(w io.Writer) handler.Configurable {
 	newBase, err := h.base.WithOutput(w)
 	if err != nil || newBase == h.base {
 		return h
@@ -264,7 +266,7 @@ func (h *stdLogHandler) WithOutput(w io.Writer) handler.AdvancedHandler {
 
 // WithCallerSkip returns a new handler with the caller skip permanently adjusted.
 // It returns the original handler if the skip value is unchanged.
-func (h *stdLogHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
+func (h *stdLogHandler) WithCallerSkip(skip int) handler.CallerAdjuster {
 	current := h.base.CallerSkip()
 	if skip == current {
 		return h
@@ -275,7 +277,7 @@ func (h *stdLogHandler) WithCallerSkip(skip int) handler.AdvancedHandler {
 
 // WithCallerSkipDelta returns a new handler with the caller skip altered by delta.
 // It returns the original handler if the delta value is zero.
-func (h *stdLogHandler) WithCallerSkipDelta(delta int) handler.AdvancedHandler {
+func (h *stdLogHandler) WithCallerSkipDelta(delta int) handler.CallerAdjuster {
 	if delta == 0 {
 		return h
 	}

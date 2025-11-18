@@ -17,7 +17,7 @@ type handlerEntry struct {
 	h         handler.Handler
 	ch        handler.Chainer
 	adv       handler.AdvancedHandler
-	cf        handler.Configurator
+	cf        handler.MutableConfig
 	snc       handler.Syncer
 	state     handler.HandlerState
 	needsPC   bool // true if the record must have a program counter
@@ -47,7 +47,7 @@ func newHandlerEntry(h handler.Handler) handlerEntry {
 	// Cache all interface checks once
 	entry.adv, _ = h.(handler.AdvancedHandler)
 	entry.ch, _ = h.(handler.Chainer)
-	entry.cf, _ = h.(handler.Configurator)
+	entry.cf, _ = h.(handler.MutableConfig)
 	entry.snc, _ = h.(handler.Syncer)
 
 	return entry
@@ -321,7 +321,7 @@ func (l *logger) WithCallerSkip(skip int) AdvancedLogger {
 	if ch, ok := h.(handler.Chainer); ok {
 		clone.ch = ch
 	}
-	if cf, ok := h.(handler.Configurator); ok {
+	if cf, ok := h.(handler.MutableConfig); ok {
 		clone.cf = cf
 	}
 	if snc, ok := h.(handler.Syncer); ok {
@@ -395,7 +395,7 @@ func (l *logger) withChainer(ch handler.Chainer) Logger {
 	if adv, ok := h.(handler.AdvancedHandler); ok {
 		clone.adv = adv
 	}
-	if cf, ok := h.(handler.Configurator); ok {
+	if cf, ok := h.(handler.MutableConfig); ok {
 		clone.cf = cf
 	}
 	if snc, ok := h.(handler.Syncer); ok {
