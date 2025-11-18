@@ -509,8 +509,6 @@ func (h *myHandler) Handle(ctx context.Context, r *handler.Record) error {
 
 ### Key Prefix Management
 
-If backend lacks native grouping, use `BaseHandler.ApplyPrefix()`:
-
 ```go
 func (h *myHandler) WithGroup(name string) handler.Chainer {
     clone := h.shallowClone()
@@ -521,7 +519,7 @@ func (h *myHandler) WithGroup(name string) handler.Chainer {
 func (h *myHandler) Handle(ctx context.Context, r *handler.Record) error {
     // Apply prefix to keys
     for i := 0; i < len(r.KeyValues)-1; i += 2 {
-        key := h.base.ApplyPrefix(fmt.Sprint(r.KeyValues[i]))
+        key := h.base.KeyPrefix() + h.base.Separator() + fmt.Sprint(r.KeyValues[i])
         // Use prefixed key
     }
 }

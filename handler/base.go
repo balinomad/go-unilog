@@ -476,23 +476,3 @@ func (h *BaseHandler) WithOutput(w io.Writer) (*BaseHandler, error) {
 
 	return clone, nil
 }
-
-// --- Utility ---
-
-// ApplyPrefix applies the current key prefix to a key string.
-// Only use if handler lacks native group prefix support.
-// Handlers with native support (zap, slog, etc.) should ignore this.
-//
-// Performance note: This implementation is optimized for the common case
-// where no prefix exists. See docs/HANDLERS.md for benchmark comparisons.
-func (h *BaseHandler) ApplyPrefix(key string) string {
-	h.mu.RLock()
-	prefix := h.keyPrefix
-	separator := h.separator
-	h.mu.RUnlock()
-
-	if prefix == "" {
-		return key
-	}
-	return prefix + separator + key
-}
