@@ -143,6 +143,8 @@ type AdvancedLogger interface {
 //	logger1, _ := unilog.NewLogger(handler1)
 //	logger2, _ := unilog.NewLogger(handler2)
 type MutableLogger interface {
+	Logger
+
 	// SetLevel changes the minimum log level that will be processed.
 	// It affects only this logger. Loggers derived from it via With/WithGroup
 	// will not be affected.

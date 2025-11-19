@@ -71,6 +71,8 @@ type Chainer interface {
 //
 // Implementations return new Configurable instances (shallow copy semantics).
 type Configurable interface {
+	Handler
+
 	// WithLevel returns a new Configurable with a new minimum level applied.
 	// It returns the original handler if the level value is unchanged.
 	WithLevel(level LogLevel) Configurable
@@ -84,6 +86,8 @@ type Configurable interface {
 //
 // Implementations return new CallerAdjuster instances (shallow copy semantics).
 type CallerAdjuster interface {
+	Handler
+
 	// WithCallerSkip returns a new CallerAdjuster with the absolute
 	// user-visible caller skip set. Negative skip values are clamped to zero.
 	WithCallerSkip(skip int) CallerAdjuster
@@ -99,6 +103,8 @@ type CallerAdjuster interface {
 //
 // Implementations return new FeatureToggler instances (shallow copy semantics).
 type FeatureToggler interface {
+	Handler
+
 	// WithCaller returns a new FeatureToggler that enables or disables caller resolution.
 	// It returns the original handler if the enabled value is unchanged.
 	// By default, caller resolution is disabled.
@@ -116,6 +122,8 @@ type FeatureToggler interface {
 // This performance gain comes at the cost of immutability; implementers
 // must ensure these methods are safe for concurrent use.
 type MutableConfig interface {
+	Handler
+
 	// SetLevel changes the minimum log level that will be processed.
 	SetLevel(level LogLevel) error
 
@@ -125,6 +133,8 @@ type MutableConfig interface {
 
 // Syncer flushes any buffered log entries.
 type Syncer interface {
+	Handler
+
 	// Sync flushes buffered log entries. Returns error on flush failure.
 	Sync() error
 }
