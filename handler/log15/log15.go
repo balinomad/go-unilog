@@ -2,281 +2,356 @@ package log15
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"runtime/debug"
-	"sync/atomic"
 
 	"github.com/inconshreveable/log15/v3"
 
-	"github.com/balinomad/go-atomicwriter"
 	"github.com/balinomad/go-caller"
-	"github.com/balinomad/go-unilog"
+	"github.com/balinomad/go-unilog/handler"
 )
 
-// log15Logger is a wrapper around log15's logger.
-type log15Logger struct {
-	l          log15.Logger
-	out        *atomicwriter.AtomicWriter
-	lvl        atomic.Int32
-	keyPrefix  string
-	separator  string
-	withTrace  bool
-	withCaller bool
-	callerSkip int
+// validFormats is the list of supported output formats.
+var validFormats = []string{"json", "terminal", "logfmt"}
+
+// defaultFormat is the default output format.
+var defaultFormat = "terminal"
+
+// log15Options holds configuration for the log15 logger.
+type log15Options struct {
+	base *handler.BaseOptions
 }
 
-// Ensure log15Logger implements the following interfaces.
+// Log15Option configures log15 logger creation.
+type Log15Option func(*log15Options) error
+
+// WithLevel sets the minimum log level.
+func WithLevel(level handler.LogLevel) Log15Option {
+	return func(o *log15Options) error {
+		return handler.WithLevel(level)(o.base)
+	}
+}
+
+// WithOutput sets the output writer.
+func WithOutput(w io.Writer) Log15Option {
+	return func(o *log15Options) error {
+		return handler.WithOutput(w)(o.base)
+	}
+}
+
+// WithFormat sets the output format ("json", "terminal", or "logfmt").
+// The default format is "terminal".
+func WithFormat(format string) Log15Option {
+	return func(o *log15Options) error {
+		return handler.WithFormat(format)(o.base)
+	}
+}
+
+// WithCaller enables or disables source location reporting.
+// If enabled, the handler will include the source location
+// of the log call site in the log record.
+// This can be useful for debugging, but may incur a performance hit
+// due to the additional stack frame analysis. The default value is false.
+func WithCaller(enabled bool) Log15Option {
+	return func(o *log15Options) error {
+		return handler.WithCaller(enabled)(o.base)
+	}
+}
+
+// WithTrace enables stack traces for ERROR and above.
+func WithTrace(enabled bool) Log15Option {
+	return func(o *log15Options) error {
+		return handler.WithTrace(enabled)(o.base)
+	}
+}
+
+// log15Handler is a wrapper around log15 package.
+type log15Handler struct {
+	base      *handler.BaseHandler
+	logger    log15.Logger
+	keyValues []any
+
+	// Cached from base for lock-free hot-path
+	withCaller bool
+	withTrace  bool
+}
+
+// Ensure log15Handler implements the following interfaces.
 var (
-	_ unilog.Logger        = (*log15Logger)(nil)
-	_ unilog.Configurator  = (*log15Logger)(nil)
-	_ unilog.Cloner        = (*log15Logger)(nil)
-	_ unilog.CallerSkipper = (*log15Logger)(nil)
+	_ handler.Handler        = (*log15Handler)(nil)
+	_ handler.Chainer        = (*log15Handler)(nil)
+	_ handler.Configurable   = (*log15Handler)(nil)
+	_ handler.CallerAdjuster = (*log15Handler)(nil)
+	_ handler.FeatureToggler = (*log15Handler)(nil)
+	_ handler.MutableConfig  = (*log15Handler)(nil)
 )
 
-// New creates a new unilog.Logger instance backed by log15.
-func New(opts ...Log15Option) (unilog.Logger, error) {
+// levelMapper maps unilog log levels to log15 log levels.
+var levelMapper = handler.NewLevelMapper(
+	log15.LvlDebug, // Trace (no native equivalent)
+	log15.LvlDebug, // Debug
+	log15.LvlInfo,  // Info
+	log15.LvlWarn,  // Warn
+	log15.LvlError, // Error
+	log15.LvlCrit,  // Critical
+	log15.LvlCrit,  // Fatal (map to Crit, exit handled by unilog)
+	log15.LvlCrit,  // Panic (map to Crit, panic handled by unilog)
+)
+
+// New creates a new handler.Handler instance backed by log15.
+func New(opts ...Log15Option) (handler.Handler, error) {
 	o := &log15Options{
-		level:     unilog.InfoLevel,
-		output:    os.Stderr,
-		format:    "json",
-		separator: "_",
+		base: &handler.BaseOptions{
+			Level:        handler.DefaultLevel,
+			Output:       os.Stderr,
+			Format:       defaultFormat,
+			ValidFormats: validFormats,
+		},
 	}
 
 	for _, opt := range opts {
 		if err := opt(o); err != nil {
-			return nil, unilog.ErrFailedOption(err)
+			return nil, err
 		}
 	}
 
-	aw, err := atomicwriter.NewAtomicWriter(o.output)
+	base, err := handler.NewBaseHandler(o.base)
 	if err != nil {
-		return nil, unilog.ErrAtomicWriterFail(err)
+		return nil, err
 	}
 
-	var format log15.Format
-	if o.format == "json" {
-		format = log15.JsonFormat()
-	} else {
-		format = log15.TerminalFormat()
+	h := &log15Handler{
+		base:       base,
+		logger:     log15.New(),
+		keyValues:  []any{},
+		withCaller: base.CallerEnabled(),
+		withTrace:  base.TraceEnabled(),
 	}
+	h.setLog15Logger()
 
-	l15 := log15.New()
-	// Use LvlDebug for the backend and filter levels within the adapter.
-	// This allows for dynamic level changes without rebuilding the handler.
-	handler := log15.LvlFilterHandler(log15.LvlDebug, log15.StreamHandler(aw, format))
-	l15.SetHandler(handler)
-
-	logger := &log15Logger{
-		l:          l15,
-		out:        aw,
-		separator:  o.separator,
-		withTrace:  o.withTrace,
-		withCaller: o.withCaller,
-		callerSkip: o.callerSkip,
-	}
-	logger.lvl.Store(int32(o.level))
-
-	return logger, nil
+	return h, nil
 }
 
-func (l *log15Logger) log(level unilog.LogLevel, msg string, skip int, keyValues ...any) {
-	if !l.Enabled(level) {
-		return
+// Handle implements the handler.Handler interface for log15.
+func (h *log15Handler) Handle(ctx context.Context, r *handler.Record) error {
+	if !h.Enabled(r.Level) {
+		return nil
 	}
 
-	// Pre-allocate assuming 2 extra fields for source and stack.
-	fields := make([]any, 0, len(keyValues)+4)
-	fields = append(fields, l.processKeyValues(keyValues...)...)
+	fields := append(h.keyValues, r.KeyValues...)
 
-	if l.withCaller {
-		fields = append(fields, "source", caller.New(l.callerSkip+2).Location())
+	// Only compute caller if enabled
+	if h.withCaller && r.PC != 0 {
+		fields = append(fields, "source", caller.NewFromPC(r.PC).Location())
 	}
 
-	if l.withTrace && level >= unilog.ErrorLevel {
+	// Only capture stack if enabled and error-level
+	if h.withTrace && r.Level >= handler.ErrorLevel {
 		fields = append(fields, "stack", string(debug.Stack()))
 	}
 
-	// Use the helper to process and append user-provided key-values.
+	h.logger.GetHandler().Log(
+		log15.Record{
+			Time:     r.Time,
+			Lvl:      levelMapper.Map(r.Level),
+			Msg:      r.Message,
+			Ctx:      fields,
+			KeyNames: log15.DefaultRecordKeyNames,
+		})
 
-	switch level {
-	case unilog.DebugLevel:
-		l.l.Debug(msg, fields...)
-	case unilog.InfoLevel:
-		l.l.Info(msg, fields...)
-	case unilog.WarnLevel:
-		l.l.Warn(msg, fields...)
-	case unilog.ErrorLevel:
-		l.l.Error(msg, fields...)
-	case unilog.CriticalLevel:
-		l.l.Crit(msg, fields...)
-	case unilog.FatalLevel:
-		l.l.Crit(msg, fields...)
-		os.Exit(1)
-	}
-}
-
-// Log implements the unilog.Logger interface for log15.
-func (l *log15Logger) Log(_ context.Context, level unilog.LogLevel, msg string, keyValues ...any) {
-	l.log(level, msg, 0, keyValues...)
-}
-
-// LogWithSkip implements the unilog.Logger interface for log15.
-func (l *log15Logger) LogWithSkip(_ context.Context, level unilog.LogLevel, msg string, skip int, keyValues ...any) {
-	l.log(level, msg, skip, keyValues...)
+	return nil
 }
 
 // Enabled checks if the given log level is enabled.
-func (l *log15Logger) Enabled(level unilog.LogLevel) bool {
-	return level >= unilog.LogLevel(l.lvl.Load())
+func (h *log15Handler) Enabled(level handler.LogLevel) bool {
+	return h.base.Enabled(level)
 }
 
-// With returns a new logger with the provided keyValues added to the context.
-func (l *log15Logger) With(keyValues ...any) unilog.Logger {
+// HandlerState returns the underlying BaseHandler.
+func (h *log15Handler) HandlerState() handler.HandlerState {
+	return h.base
+}
+
+// Features returns the supported HandlerFeatures.
+func (h *log15Handler) Features() handler.HandlerFeatures {
+	return handler.NewHandlerFeatures(handler.FeatDynamicLevel | handler.FeatDynamicOutput)
+}
+
+// WithAttrs returns a new logger with the provided keyValues added to the context.
+// If keyValues is empty, the original logger is returned.
+func (h *log15Handler) WithAttrs(keyValues []any) handler.Chainer {
 	if len(keyValues) < 2 {
-		return l
+		return h
 	}
 
-	clone := l.clone()
-	clone.l = l.l.New(keyValues...)
+	clone := h.clone()
+
+	// Fast merge of keyValues
+	lenOld := len(clone.keyValues)
+	lenNew := len(keyValues)
+	if lenNew%2 != 0 {
+		lenNew--
+	}
+	merged := make([]any, lenOld+lenNew)
+	copy(merged, clone.keyValues)
+	copy(merged[lenOld:], keyValues[:lenNew])
+	clone.keyValues = merged
 
 	return clone
 }
 
-// WithGroup returns a Logger that starts a group, if name is non-empty.
-func (l *log15Logger) WithGroup(name string) unilog.Logger {
+// WithGroup returns a Logger that starts a group (via key prefixing).
+func (h *log15Handler) WithGroup(name string) handler.Chainer {
 	if name == "" {
-		return l
+		return h
 	}
 
-	clone := l.clone()
-	if l.keyPrefix == "" {
-		clone.keyPrefix = name
-	} else {
-		clone.keyPrefix = l.keyPrefix + l.separator + name
-	}
+	clone := h.clone()
+	clone.base = h.base.WithKeyPrefix(name)
 
 	return clone
 }
 
 // SetLevel dynamically changes the minimum level of logs that will be processed.
-func (l *log15Logger) SetLevel(level unilog.LogLevel) error {
-	if err := unilog.ValidateLogLevel(level); err != nil {
+func (h *log15Handler) SetLevel(level handler.LogLevel) error {
+	if err := h.base.SetLevel(level); err != nil {
 		return err
 	}
-	l.lvl.Store(int32(level))
+
+	h.logger.SetHandler(h.buildLog15Handler())
+
 	return nil
 }
 
-// SetOutput changes the destination for log output.
-func (l *log15Logger) SetOutput(w io.Writer) error {
-	return l.out.Swap(w)
+// SetOutput sets the log destination.
+func (h *log15Handler) SetOutput(w io.Writer) error {
+	if err := h.base.SetOutput(w); err != nil {
+		return err
+	}
+
+	h.logger.SetHandler(h.buildLog15Handler())
+
+	return nil
 }
 
 // CallerSkip returns the current number of stack frames being skipped.
-func (l *log15Logger) CallerSkip() int {
-	return l.callerSkip
+func (h *log15Handler) CallerSkip() int {
+	return h.base.CallerSkip()
 }
 
-// WithCallerSkip returns a new Logger instance with the caller skip value updated.
-func (l *log15Logger) WithCallerSkip(skip int) (unilog.Logger, error) {
-	if skip < 0 {
-		return l, unilog.ErrInvalidSourceSkip
+// WithCaller returns a new handler with caller reporting enabled or disabled.
+func (h *log15Handler) WithCaller(enabled bool) handler.FeatureToggler {
+	newBase := h.base.WithCaller(enabled)
+	if newBase == h.base {
+		return h
 	}
 
-	clone := l.clone()
-	clone.callerSkip = skip
-
-	return clone, nil
+	return h.deepClone(newBase)
 }
 
-// WithCallerSkipDelta returns a new Logger instance with the caller skip value altered by the given delta.
-func (l *log15Logger) WithCallerSkipDelta(delta int) (unilog.Logger, error) {
+// WithTrace returns a new handler that enables or disables stack trace logging.
+func (h *log15Handler) WithTrace(enabled bool) handler.FeatureToggler {
+	newBase := h.base.WithTrace(enabled)
+	if newBase == h.base {
+		return h
+	}
+
+	return h.deepClone(newBase)
+}
+
+// WithLevel returns a new handler with a new minimum level applied.
+func (h *log15Handler) WithLevel(level handler.LogLevel) handler.Configurable {
+	newBase, err := h.base.WithLevel(level)
+	if err != nil || newBase == h.base {
+		return h
+	}
+
+	return h.deepClone(newBase)
+}
+
+// WithOutput returns a new handler with the output writer set permanently.
+func (h *log15Handler) WithOutput(w io.Writer) handler.Configurable {
+	newBase, err := h.base.WithOutput(w)
+	if err != nil || newBase == h.base {
+		return h
+	}
+
+	return h.deepClone(newBase)
+}
+
+// WithCallerSkip returns a new handler with the caller skip permanently adjusted.
+func (h *log15Handler) WithCallerSkip(skip int) handler.CallerAdjuster {
+	current := h.base.CallerSkip()
+	if skip == current {
+		return h
+	}
+
+	return h.WithCallerSkipDelta(skip - current)
+}
+
+// WithCallerSkipDelta returns a new handler with the caller skip altered by delta.
+func (h *log15Handler) WithCallerSkipDelta(delta int) handler.CallerAdjuster {
 	if delta == 0 {
-		return l, nil
+		return h
 	}
-	return l.WithCallerSkip(l.callerSkip + delta)
+
+	return h.WithCallerSkip(h.CallerSkip() + delta)
 }
 
-// processKeyValues processes the given keyValues and returns a slice of alternating
-// keys and values, applying the logger's key prefix.
-func (l *log15Logger) processKeyValues(keyValues ...any) []any {
-	if l.keyPrefix == "" {
-		return keyValues
+// clone returns a shallow copy of the handler.
+func (h *log15Handler) clone() *log15Handler {
+	return &log15Handler{
+		base:       h.base,
+		logger:     h.logger,
+		keyValues:  h.keyValues,
+		withCaller: h.withCaller,
+		withTrace:  h.withTrace,
 	}
-
-	processedKVs := make([]any, len(keyValues))
-	copy(processedKVs, keyValues)
-
-	prefix := l.keyPrefix + l.separator
-	for i := 0; i < len(processedKVs)-1; i += 2 {
-		key, ok := processedKVs[i].(string)
-		if !ok {
-			key = fmt.Sprint(processedKVs[i])
-		}
-		processedKVs[i] = prefix + key
-	}
-
-	return processedKVs
 }
 
-// clone returns a deep copy of the logger.
-func (l *log15Logger) clone() *log15Logger {
-	clone := &log15Logger{
-		l:          l.l, // log15.Logger is a struct with a pointer, shallow copy is fine
-		out:        l.out,
-		keyPrefix:  l.keyPrefix,
-		separator:  l.separator,
-		withTrace:  l.withTrace,
-		withCaller: l.withCaller,
-		callerSkip: l.callerSkip,
+// deepClone returns a deep copy of the logger with a new BaseHandler.
+func (h *log15Handler) deepClone(base *handler.BaseHandler) *log15Handler {
+	kvClone := make([]any, len(h.keyValues))
+	copy(kvClone, h.keyValues)
+
+	clone := &log15Handler{
+		base:       base,
+		keyValues:  kvClone,
+		withCaller: base.CallerEnabled(),
+		withTrace:  base.TraceEnabled(),
 	}
-	clone.lvl.Store(l.lvl.Load())
+	clone.setLog15Logger()
+
 	return clone
 }
 
-// Clone returns a deep copy of the logger as a unilog.Logger.
-func (l *log15Logger) Clone() unilog.Logger {
-	return l.clone()
+// buildLog15Handler returns a log15.Handler based on the current configuration.
+func (h *log15Handler) buildLog15Handler() log15.Handler {
+	format := stringToFormat(h.base.Format())
+	handler := log15.StreamHandler(h.base.AtomicWriter(), format)
+	handler = log15.LvlFilterHandler(levelMapper.Map(h.base.Level()), handler)
+
+	return handler
 }
 
-// Trace logs a message at the trace level.
-func (l *log15Logger) Trace(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.TraceLevel, msg, 0, keyValues...)
+// setLog15Logger sets the log15.Logger to be used by the handler.
+// Handler must have a valid BaseHandler.
+func (h *log15Handler) setLog15Logger() {
+	h.logger = log15.New()
+	h.logger.SetHandler(h.buildLog15Handler())
 }
 
-// Debug logs a message at the debug level.
-func (l *log15Logger) Debug(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.DebugLevel, msg, 0, keyValues...)
-}
-
-// Info logs a message at the info level.
-func (l *log15Logger) Info(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.InfoLevel, msg, 0, keyValues...)
-}
-
-// Warn logs a message at the warn level.
-func (l *log15Logger) Warn(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.WarnLevel, msg, 0, keyValues...)
-}
-
-// Error logs a message at the error level.
-func (l *log15Logger) Error(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.ErrorLevel, msg, 0, keyValues...)
-}
-
-// Critical logs a message at the critical level.
-func (l *log15Logger) Critical(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.CriticalLevel, msg, 0, keyValues...)
-}
-
-// Fatal logs a message at the fatal level and exits the process.
-func (l *log15Logger) Fatal(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.FatalLevel, msg, 0, keyValues...)
-}
-
-// Panic logs a message at the panic level and panics.
-func (l *log15Logger) Panic(_ context.Context, msg string, keyValues ...any) {
-	l.log(unilog.PanicLevel, msg, 0, keyValues...)
+// stringToFormat returns a log15.Format based on the given format string.
+func stringToFormat(format string) log15.Format {
+	switch format {
+	case "json":
+		return log15.JsonFormat()
+	case "logfmt":
+		return log15.LogfmtFormat()
+	case "terminal":
+		return log15.TerminalFormat()
+	default:
+		return log15.TerminalFormat()
+	}
 }

@@ -1,7 +1,7 @@
 github.com/balinomad/go-atomicwriter v1.0.1 h1:jUzEy3hsJwF/Tj9fm3A4HN+P84RjgXJfuoIBZJP8saw=
 github.com/balinomad/go-atomicwriter v1.0.1/go.mod h1:QaEVyXViHIIu61AYG580rjMHsGx2D0/w4GP4//sDezs=
-github.com/balinomad/go-unilog v0.0.0-20251103020302-050cde3eee4b h1:lYuGv9QfFoYBRE4G+ASImhYAmnlkihJbrkNwQiBjKOA=
-github.com/balinomad/go-unilog v0.0.0-20251103020302-050cde3eee4b/go.mod h1:0Rn/24UV68xMmM4CXAPZ+PLdzXqvdyFtG7WI6aXT1co=
+github.com/balinomad/go-unilog v0.0.0-20251117072432-cc8fdf80ac8f h1:uwjCe9G4cPfXEUzpNoM/LApNS9x8+FeU9ULN7IKdOyE=
+github.com/balinomad/go-unilog v0.0.0-20251117072432-cc8fdf80ac8f/go.mod h1:CDFIQDrqCJZYH9dG3JwtXK0L0co6Oolx/BSsYiFdS0E=
 github.com/coreos/go-systemd/v22 v22.5.0/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSVTIJ3seZv2GcEnc=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
 github.com/mattn/go-colorable v0.1.13/go.mod h1:7S9/ev0klgBDR4GtXTXX8a3vIGJpMovkB8vQcUbaXHg=
@@ -18,5 +18,5 @@ github.com/rs/zerolog v1.34.0/go.mod h1:bJsvje4Z08ROH4Nhs5iH600c3IkWhwp44iRc54W6
 golang.org/x/sys v0.0.0-20220811171246-fbc7d0a398ab/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 golang.org/x/sys v0.12.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
-golang.org/x/sys v0.35.0 h1:vz1N37gP5bs89s7He8XuIYXpyY0+QlsKmzipCbUtyxI=
-golang.org/x/sys v0.35.0/go.mod h1:BJP2sWEmIv4KK5OTEluFJCKSidICx8ciO85XgH3Ak8k=
+golang.org/x/sys v0.38.0 h1:3yZWxaJjBmCWXqhN1qh02AkOnCQ1poK6oF+a7xWL6Gc=
+golang.org/x/sys v0.38.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=

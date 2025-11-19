@@ -76,8 +76,9 @@ func main() {
 | **[slog](handler/slog/)** | Standard library users, new projects | Good | Native caller, groups, context |
 | **[zap](handler/zap/)** | High-throughput services | Excellent | Zero-alloc, buffered, full feature set |
 | **[stdlog](handler/stdlog/)** | Simple applications, stdlib-only | Moderate | Minimal dependencies |
-
-**In Development**: zerolog, logrus, log15 (handlers will be rewritten)
+| **[zerolog](handler/zerolog/)** | Ultra-high performance, zero-alloc | Excellent | Zero-alloc, native caller, native groups |
+| **[logrus](handler/logrus/)** | Existing logrus codebases, hooks | Good | Native caller, context, hooks support |
+| **[log15](handler/log15/)** | Terminal-friendly development | Good | Colored output, multiple formats |
 
 See [Handler Comparison Matrix](docs/HANDLERS.md) for detailed feature analysis.
 
@@ -150,7 +151,7 @@ dbLogger.Info(ctx, "query executed",
 
 ### Dynamic Configuration
 
-Change log level at runtime (handler must support `Configurator` interface):
+Change log level at runtime (handler must support `MutableConfig` interface):
 
 ```go
 // Production: INFO level

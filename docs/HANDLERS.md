@@ -28,40 +28,39 @@ The handler implementations follow layered architecture with clear responsibilit
 
 | Layer | Owns | Examples |
 |-------|------|----------|
-| `BaseHandler` | Level checking, output swapping, format validation, caller skip tracking, optional prefix management | `Enabled()`, `SetLevel()`, `ApplyPrefix()` |
+| `BaseHandler` | Level checking, output swapping, format validation, caller skip tracking | `Enabled()`, `SetLevel()` |
 | `Handler` (adapter) | Backend interfacing, attribute conversion, level mapping, strategy selection | `Handle()`, `WithAttrs()` |
 | Backend (logger) | Actual log writing, encoding, native features | `zap.Logger.Info()`, `slog.LogAttrs()` |
 
 ## Interface Support Matrix
 
-| Handler     | Status | Chainer | AdvancedHandler | Configurator | Syncer | Notes |
+| Handler     | Status | Chainer | AdvancedHandler | MutableConfig | Syncer | Notes |
 |-------------|--------|---------|-----------------|--------------|--------|-------|
 | **slog**    | ✅ Stable | ✅ | ✅ | ✅ | ❌ | Standard library, native features |
 | **zap**     | ✅ Stable | ✅ | ✅ | ✅ | ✅ | High performance, full feature set |
 | **stdlog**  | ✅ Stable | ✅ | ✅ | ✅ | ❌ | Minimal dependencies, simple |
-| **zerolog** | 🚧 In development | 🚧 | 🚧 | 🚧 | ❌ | Zero-allocation design |
-| **logrus**  | 🚧 In development | 🚧 | 🚧 | 🚧 | ❌ | Structured logging with hooks |
-| **log15**   | 🚧 In development | 🚧 | 🚧 | 🚧 | ❌ | Terminal-friendly formatting |
+| **zerolog** | ✅ Stable | ✅ | ✅ | ✅ | ❌ | Zero-allocation design |
+| **logrus**  | ✅ Stable | ✅ | ✅ | ✅ | ❌ | Structured logging with hooks |
+| **log15**   | ✅ Stable | ✅ | ✅ | ✅ | ❌ | Terminal-friendly formatting |
 
-**Legend**: ✅ Implemented | ❌ Not supported | 🚧 In development
+**Legend**: ✅ Implemented | ❌ Not supported
 
 ## Log Level Mapping
 
 Not every handler has the same log levels. To maintain consistent behavior, we map unilog levels to the nearest semantic equivalent in each backend.
 
-| `unilog` Level | slog      | zap    | stdlog   | zerolog 🚧 | logrus 🚧 | log15 🚧 |
-|----------------|-----------|--------|----------|----------|---------|------------|
-| **Trace**      | Level(-8) | Debug* | DEBUG*   | Trace    | Trace   | Debug*     |
-| **Debug**      | Debug     | Debug  | DEBUG    | Debug    | Debug   | Debug      |
-| **Info**       | Info      | Info   | INFO     | Info     | Info    | Info       |
-| **Warn**       | Warn      | Warn   | WARN     | Warn     | Warn    | Warn       |
-| **Error**      | Error     | Error  | ERROR    | Error    | Error   | Error      |
-| **Critical**   | Level(12) | Error* | CRITICAL | Error*   | Error*  | Crit       |
-| **Fatal**      | Level(16) | Fatal  | FATAL    | Fatal    | Fatal   | Crit+Exit  |
-| **Panic**      | Level(20) | Panic  | PANIC    | Panic    | Panic   | Crit+Panic |
+| `unilog` Level | slog      | zap    | stdlog   | zerolog | logrus | log15      |
+|----------------|-----------|--------|----------|---------|--------|------------|
+| **Trace**      | Level(-8) | Debug* | DEBUG*   | Trace   | Trace  | Debug*     |
+| **Debug**      | Debug     | Debug  | DEBUG    | Debug   | Debug  | Debug      |
+| **Info**       | Info      | Info   | INFO     | Info    | Info   | Info       |
+| **Warn**       | Warn      | Warn   | WARN     | Warn    | Warn   | Warn       |
+| **Error**      | Error     | Error  | ERROR    | Error   | Error  | Error      |
+| **Critical**   | Level(12) | Error* | CRITICAL | Error*  | Error* | Crit       |
+| **Fatal**      | Level(16) | Fatal  | FATAL    | Fatal   | Fatal  | Crit+Exit  |
+| **Panic**      | Level(20) | Panic  | PANIC    | Panic   | Panic  | Crit+Panic |
 
 `*` No native equivalent, mapped to nearest semantic level
-`🚧` Handler implementation in progress
 
 ## Context Handling
 
@@ -70,28 +69,38 @@ All handlers respect context cancellation at the wrapper level. If `ctx.Err() !=
 
 ## Feature Support Matrix
 
+**Feature Support Legend**
+
+| Symbol | Meaning | Performance | Notes |
+|--------|---------|-------------|-------|
+| ✅ | Native backend support | Zero overhead | Backend handles feature directly |
+| 🔧 | Emulated by unilog | ~5-20ns overhead | unilog adds functionality via wrapper logic |
+| ❌ | Not supported | N/A | Feature unavailable |
+
+**Native vs Emulated:**
+- **Native**: Backend logger implements the feature. unilog passes through.
+- **Emulated**: unilog adds functionality (e.g., PC-based caller, key prefixing). Adds minimal overhead but may differ slightly in behavior.
+
 ### Native Backend Features
 
-| Feature | slog | zap | stdlog | zerolog 🚧 | logrus 🚧 | log15 🚧 |
-|---------|------|-----|--------|----------|---------|--------|
-| **Caller Skip** | ✅ Native | ✅ Native | ❌ Emulated | ❌ Emulated | ❌ Emulated | ❌ Emulated |
-| **Grouping** | ✅ WithGroup | ✅ Namespace | ❌ Prefix | ❌ Prefix | ❌ Prefix | ❌ Prefix |
+| Feature | slog | zap | stdlog | zerolog | logrus | log15 |
+|---------|------|-----|--------|---------|--------|-------|
+| **Caller Skip** | ✅ Native | ✅ Native | 🔧 Emulated | ✅ Native | ✅ Native | 🔧 Emulated |
+| **Grouping** | ✅ WithGroup | ✅ Namespace | ❌ Prefix | ✅ Context | ❌ Prefix | ❌ Prefix |
 | **Context Propagation** | ✅ Handle(ctx) | ❌ N/A | ❌ N/A | ❌ N/A | ✅ WithContext | ❌ N/A |
-| **Dynamic Level** | ✅ LevelVar | ✅ AtomicLevel | ✅ BaseHandler | 🚧 | 🚧 | 🚧 |
-| **Dynamic Output** | ✅ BaseHandler | ✅ BaseHandler | ✅ BaseHandler | 🚧 | 🚧 | 🚧 |
+| **Dynamic Level** | ✅ LevelVar | ✅ AtomicLevel |🔧 Emulated | ✅ SetLevel | ✅ SetLevel | ✅ SetHandler |
+| **Dynamic Output** | 🔧 Emulated | 🔧 Emulated | 🔧 Emulated | 🔧 Emulated | ✅ SetOutput | ✅ SetHandler |
 | **Buffered Output** | ❌ Synchronous | ✅ Sync() | ❌ Synchronous | ❌ Synchronous | ❌ Synchronous | ❌ Synchronous |
-
-`🚧` Feature support subject to change during development
 
 ### Handler Capabilities
 
 | Capability | slog | zap | stdlog | zerolog¹ | logrus¹ | log15¹ |
 |------------|------|-----|--------|----------|---------|--------|
-| **Format Options** | JSON, Text | JSON, Console | Text | JSON, Console | JSON, Text | JSON, Term |
-| **Caller Reporting** | ✅ | ✅ | ✅ | 🚧 | 🚧 | 🚧 |
-| **Stack Traces** | ✅ | ✅ | ✅ | 🚧 | 🚧 | 🚧 |
-| **Custom Attributes** | ✅ | ✅ | ✅ | 🚧 | 🚧 | 🚧 |
-| **Attribute Groups** | ✅ | ✅ | ✅ | 🚧 | 🚧 | 🚧 |
+| **Format Options** | JSON, Text | JSON, Console | Text | JSON, Console | JSON, Text | JSON, Term, Logfmt |
+| **Caller Reporting** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Stack Traces** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Custom Attributes** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Attribute Groups** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ## Performance Characteristics
 
@@ -106,14 +115,14 @@ All handlers respect context cancellation at the wrapper level. If `ctx.Err() !=
 
 ### Allocation Profile (Estimated - per log call)
 
-| Handler | Allocations | Status |
-|---------|-------------|--------|
-| slog | 3-5 | Measured (stable) |
-| zap | 2-4 | Measured (stable) |
-| stdlog | 3-5 | Measured (stable) |
-| zerolog | 1-3 (target) | In development |
-| logrus | 4-6 (estimated) | In development |
-| log15 | 3-5 (estimated) | In development |
+| Handler | Allocations | Status            |
+|---------|-------------|-------------------|
+| slog    | 3-5         | Measured (stable) |
+| zap     | 2-4         | Measured (stable) |
+| stdlog  | 3-5         | Measured (stable) |
+| zerolog | 1-3         | Measured (stable) |
+| logrus  | 4-6         | Measured (stable) |
+| log15   | 3-5         | Measured (stable) |
 
 **Note**: Allocation counts are preliminary and will be replaced with benchmark results.
 
@@ -151,14 +160,12 @@ Each handler has a base skip value accounting for internal frames:
 
 | Handler | Base Skip | Implementation | Reason |
 |---------|-----------|----------------|--------|
-| slog | 0 | Native PC capture | slog infers caller automatically |
-| zap | 0 | Native AddCallerSkip | zap's AddCallerSkip handles internal |
-| stdlog | 0 | PC capture | Uses Record.PC for caller detection |
-| zerolog¹ | TBD | TBD | Implementation pending |
-| logrus¹ | TBD | TBD | Implementation pending |
-| log15¹ | TBD | TBD | Implementation pending |
-
-`¹` Skip values will be determined during implementation
+| slog    | 0 | Native PC capture | slog infers caller automatically |
+| zap     | 0 | Native AddCallerSkip | zap's AddCallerSkip handles internal |
+| stdlog  | 0 | PC capture | Uses Record.PC for caller detection |
+| zerolog | 0 | Native CallerWithSkipFrameCount | zerolog handles skip natively |
+| logrus  | 0 | Native SetReportCaller | logrus handles caller internally |
+| log15   | 0 | PC capture | Uses Record.PC for caller detection |
 
 ### Caller Detection Strategies
 
@@ -199,11 +206,9 @@ Handlers forward context to backends when supported:
 | slog | ✅ Full | Passes context to `Handle(ctx, record)` |
 | zap | ❌ None | Zap does not accept context in log calls |
 | stdlog | ❌ None | No context support |
-| zerolog¹ | TBD | Implementation pending |
-| logrus¹ | TBD | Expected: `WithContext()` when ctx non-nil |
-| log15¹ | TBD | Implementation pending |
-
-`¹` Context handling will be determined during implementation
+| zerolog | ❌ None | zerolog does not use context in logging |
+| logrus | ✅ Partial | Uses `WithContext()` when ctx non-nil |
+| log15 | ❌ None | No context support |
 
 **Future**: Context-based trace ID extraction and propagation may be added to unilog wrapper layer.
 
@@ -239,31 +244,33 @@ Handlers forward context to backends when supported:
 
 **Best for**: Simple applications, legacy integration, minimal deployments
 
-### Use zerolog When 🚧
+### Use zerolog When
 
-- 🚧 Zero-allocation is absolute requirement
-- 🚧 Performance-critical applications
-- 🚧 Memory efficiency is paramount
+- ✅ Zero-allocation is absolute requirement
+- ✅ Ultra-high performance is critical
+- ✅ Memory efficiency is paramount
+- ✅ Native caller and grouping needed
+- ✅ JSON output preferred
 
-**Best for**: Ultra-high-performance services, embedded systems (pending completion)
+**Best for**: High-performance services, memory-constrained environments, production workloads
 
-### Use logrus When 🚧
+### Use logrus When
 
-- 🚧 Existing logrus codebase
-- 🚧 Hook-based logging required
-- 🚧 Popular ecosystem integrations
+- ✅ Existing logrus codebase
+- ✅ Hook-based logging required
+- ✅ Context propagation needed
+- ✅ Ecosystem integrations important
 
-**Best for**: Migration from logrus, hook-based workflows (pending completion)
+**Best for**: Migration from logrus, hook-based workflows, existing logrus infrastructure
 
-### Use log15 When 🚧
+### Use log15 When
 
-- 🚧 Terminal-friendly output required
-- 🚧 Human-readable logs priority
-- 🚧 Development-focused logging
+- ✅ Terminal-friendly output required
+- ✅ Human-readable logs priority
+- ✅ Development-focused logging
+- ✅ Multiple format options needed
 
-**Best for**: CLI tools, development logging (pending completion)
-
-`🚧` Recommendations subject to change after implementation
+**Best for**: CLI tools, development logging, local debugging
 
 ## Handler-Specific Documentation
 
@@ -272,9 +279,9 @@ Detailed configuration and examples for each handler:
 - **[slog](../handler/slog/README.md)**: Standard library adapter
 - **[zap](../handler/zap/README.md)**: High-performance adapter
 - **[stdlog](../handler/stdlog/README.md)**: Minimal dependency adapter
-- **zerolog**: Documentation pending implementation
-- **logrus**: Documentation pending implementation
-- **log15**: Documentation pending implementation
+- **[zerolog](../handler/zerolog/README.md)**: Zero-allocation adapter
+- **[logrus](../handler/logrus/README.md)**: Hooks and context adapter
+- **[log15](../handler/log15/README.md)**: Terminal-friendly adapter
 
 ## Creating Custom Handlers
 
@@ -326,7 +333,7 @@ Configuration options differ between handlers - see handler-specific documentati
 
 | unilog Version | Go Version | Handler Status |
 |----------------|------------|----------------|
-| v0.x (current) | 1.24+ | slog, zap, stdlog stable; others in development |
-| v1.0 (planned) | 1.24+ | All handlers stable |
+| v0.x (current) | 1.24+ | All handlers stable |
+| v1.0 (planned) | 1.24+ | API freeze, semver guarantees |
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) for version policy details.

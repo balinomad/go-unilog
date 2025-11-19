@@ -5,290 +5,369 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"runtime/debug"
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/balinomad/go-atomicwriter"
-	"github.com/balinomad/go-caller"
-	"github.com/balinomad/go-unilog"
+	"github.com/balinomad/go-unilog/handler"
 )
 
-// logrusLogger is a wrapper around Logrus's logger.
-type logrusLogger struct {
-	entry      *logrus.Entry
-	out        *atomicwriter.AtomicWriter
-	keyPrefix  string
-	separator  string
-	withTrace  bool
-	withCaller bool
-	callerSkip int
+// validFormats is the list of supported output formats.
+var validFormats = []string{"json", "text"}
+
+// logrusOptions holds configuration for the logrus logger.
+type logrusOptions struct {
+	base *handler.BaseOptions
 }
 
-// Ensure logrusLogger implements the following interfaces.
+// LogrusOption configures logrus logger creation.
+type LogrusOption func(*logrusOptions) error
+
+// WithLevel sets the minimum log level.
+func WithLevel(level handler.LogLevel) LogrusOption {
+	return func(o *logrusOptions) error {
+		return handler.WithLevel(level)(o.base)
+	}
+}
+
+// WithOutput sets the output writer.
+func WithOutput(w io.Writer) LogrusOption {
+	return func(o *logrusOptions) error {
+		return handler.WithOutput(w)(o.base)
+	}
+}
+
+// WithFormat sets the output format ("json" or "text").
+func WithFormat(format string) LogrusOption {
+	return func(o *logrusOptions) error {
+		return handler.WithFormat(format)(o.base)
+	}
+}
+
+// WithCaller enables source location reporting.
+func WithCaller(enabled bool) LogrusOption {
+	return func(o *logrusOptions) error {
+		return handler.WithCaller(enabled)(o.base)
+	}
+}
+
+// WithTrace enables stack traces for ERROR and above.
+func WithTrace(enabled bool) LogrusOption {
+	return func(o *logrusOptions) error {
+		return handler.WithTrace(enabled)(o.base)
+	}
+}
+
+// logrusHandler is a wrapper around logrus.Logger.
+type logrusHandler struct {
+	base   *handler.BaseHandler
+	logger *logrus.Logger
+	entry  *logrus.Entry
+
+	// Cached from base for lock-free hot-path
+	withCaller bool
+	withTrace  bool
+}
+
+// Ensure logrusHandler implements the following interfaces.
 var (
-	_ unilog.Logger        = (*logrusLogger)(nil)
-	_ unilog.Configurator  = (*logrusLogger)(nil)
-	_ unilog.Cloner        = (*logrusLogger)(nil)
-	_ unilog.CallerSkipper = (*logrusLogger)(nil)
+	_ handler.Handler        = (*logrusHandler)(nil)
+	_ handler.Chainer        = (*logrusHandler)(nil)
+	_ handler.Configurable   = (*logrusHandler)(nil)
+	_ handler.CallerAdjuster = (*logrusHandler)(nil)
+	_ handler.FeatureToggler = (*logrusHandler)(nil)
+	_ handler.MutableConfig  = (*logrusHandler)(nil)
 )
 
-// New creates a new unilog.Logger instance backed by logrus.
-func New(opts ...LogrusOption) (unilog.Logger, error) {
+// levelMapper maps unilog log levels to logrus log levels.
+var levelMapper = handler.NewLevelMapper(
+	logrus.TraceLevel, // Trace
+	logrus.DebugLevel, // Debug
+	logrus.InfoLevel,  // Info
+	logrus.WarnLevel,  // Warn
+	logrus.ErrorLevel, // Error
+	logrus.ErrorLevel, // Critical (no native equivalent)
+	logrus.FatalLevel, // Fatal
+	logrus.PanicLevel, // Panic
+)
+
+// New creates a new handler.Handler instance backed by logrus.
+func New(opts ...LogrusOption) (handler.Handler, error) {
 	o := &logrusOptions{
-		level:     unilog.InfoLevel,
-		output:    os.Stderr,
-		format:    "json",
-		separator: "_",
+		base: &handler.BaseOptions{
+			Level:        handler.InfoLevel,
+			Output:       os.Stderr,
+			Format:       "text",
+			ValidFormats: validFormats,
+		},
 	}
 
 	for _, opt := range opts {
 		if err := opt(o); err != nil {
-			return nil, fmt.Errorf("failed to apply option: %w", err)
+			return nil, err
 		}
 	}
 
-	aw, err := atomicwriter.NewAtomicWriter(o.output)
+	base, err := handler.NewBaseHandler(o.base)
 	if err != nil {
-		return nil, unilog.ErrAtomicWriterFail(err)
+		return nil, err
 	}
 
-	l := logrus.New()
-	l.SetOutput(aw)
-	l.SetLevel(toLogrusLevel(o.level))
-	l.SetReportCaller(false)
+	// Create logrus logger
+	logger := logrus.New()
+	logger.SetOutput(base.AtomicWriter())
+	logger.SetLevel(levelMapper.Map(base.Level()))
 
-	if o.format == "json" {
-		l.SetFormatter(&logrus.JSONFormatter{})
+	// Set formatter
+	if base.Format() == "json" {
+		logger.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
+		})
 	} else {
-		l.SetFormatter(&logrus.TextFormatter{DisableQuote: true})
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp:   true,
+			TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
+		})
 	}
 
-	logger := &logrusLogger{
-		entry:      logrus.NewEntry(l),
-		out:        aw,
-		separator:  o.separator,
-		withTrace:  o.withTrace,
-		withCaller: o.withCaller,
-		callerSkip: o.callerSkip,
-	}
+	// Enable caller reporting if configured
+	logger.SetReportCaller(base.CallerEnabled())
 
-	return logger, nil
+	return &logrusHandler{
+		base:       base,
+		logger:     logger,
+		entry:      logrus.NewEntry(logger),
+		withCaller: base.CallerEnabled(),
+		withTrace:  base.TraceEnabled(),
+	}, nil
 }
 
-func (l *logrusLogger) log(ctx context.Context, level unilog.LogLevel, msg string, skip int, keyValues ...any) {
-	if !l.Enabled(level) {
-		return
+// Handle implements the handler.Handler interface for logrus.
+func (h *logrusHandler) Handle(ctx context.Context, r *handler.Record) error {
+	if !h.Enabled(r.Level) {
+		return nil
 	}
 
-	fields := l.processKeyValues(keyValues...)
+	// Start with entry (may have chained fields)
+	entry := h.entry
 
-	if l.withCaller {
-		if s := l.callerSkip + skip + 2; s > 0 {
-			fields["source"] = caller.New(s).Location()
-		}
-	}
-
-	if l.withTrace && level >= unilog.ErrorLevel {
-		fields["stack"] = string(debug.Stack())
-	}
-
-	entry := l.entry.WithFields(fields)
-	if ctx != nil && ctx != context.Background() {
+	// Add context if provided
+	if ctx != nil {
 		entry = entry.WithContext(ctx)
 	}
 
-	entry.Log(toLogrusLevel(level), msg)
-
-	// Handle termination levels
-	switch level {
-	case unilog.FatalLevel:
-		os.Exit(1)
-	case unilog.PanicLevel:
-		panic(msg)
-	}
-}
-
-// Log implements the unilog.Logger interface for logrus.
-func (l *logrusLogger) Log(ctx context.Context, level unilog.LogLevel, msg string, keyValues ...any) {
-	l.log(ctx, level, msg, 0, keyValues...)
-}
-
-// LogWithSkip implements the unilog.CallerSkipper interface for logrus.
-func (l *logrusLogger) LogWithSkip(ctx context.Context, level unilog.LogLevel, msg string, skip int, keyValues ...any) {
-	l.log(ctx, level, msg, skip, keyValues...)
-}
-
-// With returns a new logger with the provided keyValues added to the context.
-func (l *logrusLogger) With(keyValues ...any) unilog.Logger {
-	if len(keyValues) < 2 {
-		return l
+	// Convert keyValues to logrus.Fields
+	fields := make(logrus.Fields, len(r.KeyValues)/2)
+	for i := 0; i < len(r.KeyValues)-1; i += 2 {
+		key := fmt.Sprint(r.KeyValues[i])
+		fields[key] = r.KeyValues[i+1]
 	}
 
-	clone := l.clone()
-	clone.entry = l.entry.WithFields(l.processKeyValues(keyValues...))
-
-	return clone
-}
-
-// WithGroup returns a Logger that starts a group, if name is non-empty.
-func (l *logrusLogger) WithGroup(name string) unilog.Logger {
-	if name == "" {
-		return l
+	// Add fields to entry
+	if len(fields) > 0 {
+		entry = entry.WithFields(fields)
 	}
 
-	clone := l.clone()
-	if l.keyPrefix == "" {
-		clone.keyPrefix = name
-	} else {
-		clone.keyPrefix = l.keyPrefix + l.separator + name
+	// Add caller if enabled and not already handled by logger
+	if h.withCaller && !h.logger.ReportCaller && r.PC != 0 {
+		frame := resolveFrame(r.PC)
+		entry = entry.WithField("caller", frame)
 	}
 
-	return clone
-}
-
-// Enabled checks if the given log level is enabled.
-func (l *logrusLogger) Enabled(level unilog.LogLevel) bool {
-	return l.entry.Logger.IsLevelEnabled(toLogrusLevel(level))
-}
-
-// SetLevel dynamically changes the minimum level of logs that will be processed.
-func (l *logrusLogger) SetLevel(level unilog.LogLevel) error {
-	if err := unilog.ValidateLogLevel(level); err != nil {
-		return err
+	// Add stack trace if enabled
+	if h.withTrace && r.Level >= handler.ErrorLevel {
+		entry = entry.WithField("stack", string(debug.Stack()))
 	}
-	l.entry.Logger.SetLevel(toLogrusLevel(level))
+
+	entry.Log(levelMapper.Map(r.Level), r.Message)
 
 	return nil
 }
 
-// SetOutput changes the destination for log output.
-func (l *logrusLogger) SetOutput(w io.Writer) error {
-	return l.out.Swap(w)
+// Enabled checks if the given log level is enabled.
+func (h *logrusHandler) Enabled(level handler.LogLevel) bool {
+	return h.base.Enabled(level)
+}
+
+// HandlerState returns the underlying BaseHandler.
+func (h *logrusHandler) HandlerState() handler.HandlerState {
+	return h.base
+}
+
+// Features returns the supported HandlerFeatures.
+func (h *logrusHandler) Features() handler.HandlerFeatures {
+	return handler.NewHandlerFeatures(
+		handler.FeatNativeCaller |
+			handler.FeatContextPropagation |
+			handler.FeatDynamicLevel |
+			handler.FeatDynamicOutput)
+}
+
+// WithAttrs returns a new logger with the provided keyValues added to the context.
+func (h *logrusHandler) WithAttrs(keyValues []any) handler.Chainer {
+	if len(keyValues) < 2 {
+		return h
+	}
+
+	// Convert keyValues to logrus.Fields
+	fields := make(logrus.Fields, len(keyValues)/2)
+	for i := 0; i < len(keyValues)-1; i += 2 {
+		key := fmt.Sprint(keyValues[i])
+		fields[key] = keyValues[i+1]
+	}
+
+	clone := h.clone()
+	clone.entry = h.entry.WithFields(fields)
+
+	return clone
+}
+
+// WithGroup returns a Logger that starts a group (via key prefixing).
+func (h *logrusHandler) WithGroup(name string) handler.Chainer {
+	if name == "" {
+		return h
+	}
+
+	clone := h.clone()
+	clone.base = h.base.WithKeyPrefix(name)
+
+	return clone
+}
+
+// SetLevel dynamically changes the minimum level of logs that will be processed.
+func (h *logrusHandler) SetLevel(level handler.LogLevel) error {
+	if err := h.base.SetLevel(level); err != nil {
+		return err
+	}
+
+	h.logger.SetLevel(levelMapper.Map(level))
+
+	return nil
+}
+
+// SetOutput sets the log destination.
+func (h *logrusHandler) SetOutput(w io.Writer) error {
+	if err := h.base.SetOutput(w); err != nil {
+		return err
+	}
+
+	h.logger.SetOutput(h.base.AtomicWriter())
+
+	return nil
 }
 
 // CallerSkip returns the current number of stack frames being skipped.
-func (l *logrusLogger) CallerSkip() int {
-	return l.callerSkip
+func (h *logrusHandler) CallerSkip() int {
+	return h.base.CallerSkip()
 }
 
-// WithCallerSkip returns a new Logger instance with the caller skip value updated.
-func (l *logrusLogger) WithCallerSkip(skip int) (unilog.Logger, error) {
-	if skip < 0 {
-		return l, unilog.ErrInvalidSourceSkip
+// WithCaller returns a new handler with caller reporting enabled or disabled.
+func (h *logrusHandler) WithCaller(enabled bool) handler.FeatureToggler {
+	newBase := h.base.WithCaller(enabled)
+	if newBase == h.base {
+		return h
 	}
 
-	clone := l.clone()
-	clone.callerSkip = skip
-
-	return clone, nil
+	return h.deepClone(newBase)
 }
 
-// WithCallerSkipDelta returns a new Logger instance with the caller skip value altered by the given delta.
-func (l *logrusLogger) WithCallerSkipDelta(delta int) (unilog.Logger, error) {
+// WithTrace returns a new handler that enables or disables stack trace logging.
+func (h *logrusHandler) WithTrace(enabled bool) handler.FeatureToggler {
+	newBase := h.base.WithTrace(enabled)
+	if newBase == h.base {
+		return h
+	}
+
+	return h.deepClone(newBase)
+}
+
+// WithLevel returns a new handler with a new minimum level applied.
+func (h *logrusHandler) WithLevel(level handler.LogLevel) handler.Configurable {
+	newBase, err := h.base.WithLevel(level)
+	if err != nil || newBase == h.base {
+		return h
+	}
+
+	return h.deepClone(newBase)
+}
+
+// WithOutput returns a new handler with the output writer set permanently.
+func (h *logrusHandler) WithOutput(w io.Writer) handler.Configurable {
+	newBase, err := h.base.WithOutput(w)
+	if err != nil || newBase == h.base {
+		return h
+	}
+
+	return h.deepClone(newBase)
+}
+
+// WithCallerSkip returns a new handler with the caller skip permanently adjusted.
+func (h *logrusHandler) WithCallerSkip(skip int) handler.CallerAdjuster {
+	current := h.base.CallerSkip()
+	if skip == current {
+		return h
+	}
+
+	return h.WithCallerSkipDelta(skip - current)
+}
+
+// WithCallerSkipDelta returns a new handler with the caller skip altered by delta.
+func (h *logrusHandler) WithCallerSkipDelta(delta int) handler.CallerAdjuster {
 	if delta == 0 {
-		return l, nil
+		return h
 	}
-	return l.WithCallerSkip(l.CallerSkip() + delta)
+
+	newBase, err := h.base.WithCallerSkipDelta(delta)
+	if err != nil {
+		return h
+	}
+
+	return h.deepClone(newBase)
 }
 
-// processKeyValues processes the given keyValues and returns a logrus.Fields object.
-func (l *logrusLogger) processKeyValues(keyValues ...any) logrus.Fields {
-	fields := make(logrus.Fields, len(keyValues)/2)
-	prefix := ""
-	if l.keyPrefix != "" {
-		prefix = l.keyPrefix + l.separator
-	}
-
-	for i := 0; i < len(keyValues)-1; i += 2 {
-		key, ok := keyValues[i].(string)
-		if !ok {
-			key = fmt.Sprint(keyValues[i])
-		}
-		fields[prefix+key] = keyValues[i+1]
-	}
-	return fields
-}
-
-// clone returns a deep copy of the logger.
-func (l *logrusLogger) clone() *logrusLogger {
-	return &logrusLogger{
-		entry:      l.entry,
-		out:        l.out,
-		keyPrefix:  l.keyPrefix,
-		separator:  l.separator,
-		withTrace:  l.withTrace,
-		withCaller: l.withCaller,
-		callerSkip: l.callerSkip,
+// clone returns a shallow copy of the handler.
+func (h *logrusHandler) clone() *logrusHandler {
+	return &logrusHandler{
+		base:       h.base,
+		logger:     h.logger,
+		entry:      h.entry,
+		withCaller: h.withCaller,
+		withTrace:  h.withTrace,
 	}
 }
 
-// Clone returns a deep copy of the logger as a unilog.Logger.
-func (l *logrusLogger) Clone() unilog.Logger {
-	return l.clone()
-}
+// deepClone returns a deep copy of the handler with a new BaseHandler.
+func (h *logrusHandler) deepClone(base *handler.BaseHandler) *logrusHandler {
+	logger := logrus.New()
+	logger.SetOutput(base.AtomicWriter())
+	logger.SetLevel(levelMapper.Map(base.Level()))
 
-// Trace logs a message at the trace level.
-func (l *logrusLogger) Trace(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.TraceLevel, msg, 0, keyValues...)
-}
-
-// Debug logs a message at the debug level.
-func (l *logrusLogger) Debug(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.DebugLevel, msg, 0, keyValues...)
-}
-
-// Info logs a message at the info level.
-func (l *logrusLogger) Info(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.InfoLevel, msg, 0, keyValues...)
-}
-
-// Warn logs a message at the warn level.
-func (l *logrusLogger) Warn(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.WarnLevel, msg, 0, keyValues...)
-}
-
-// Error logs a message at the error level.
-func (l *logrusLogger) Error(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.ErrorLevel, msg, 0, keyValues...)
-}
-
-// Critical logs a message at the critical level.
-func (l *logrusLogger) Critical(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.CriticalLevel, msg, 0, keyValues...)
-}
-
-// Fatal logs a message at the fatal level and exits the process.
-func (l *logrusLogger) Fatal(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.FatalLevel, msg, 0, keyValues...)
-}
-
-// Panic logs a message at the panic level and panics.
-func (l *logrusLogger) Panic(ctx context.Context, msg string, keyValues ...any) {
-	l.log(ctx, unilog.PanicLevel, msg, 0, keyValues...)
-}
-
-func toLogrusLevel(level unilog.LogLevel) logrus.Level {
-	level = min(max(level, unilog.MinLevel), unilog.MaxLevel)
-
-	switch level {
-	case unilog.TraceLevel:
-		return logrus.TraceLevel
-	case unilog.DebugLevel:
-		return logrus.DebugLevel
-	case unilog.InfoLevel:
-		return logrus.InfoLevel
-	case unilog.WarnLevel:
-		return logrus.WarnLevel
-	case unilog.ErrorLevel:
-		return logrus.ErrorLevel
-	case unilog.CriticalLevel:
-		return logrus.ErrorLevel
-	case unilog.FatalLevel:
-		return logrus.FatalLevel
-	case unilog.PanicLevel:
-		return logrus.PanicLevel
-	default:
-		return logrus.InfoLevel
+	if base.Format() == "json" {
+		logger.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
+		})
+	} else {
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp:   true,
+			TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
+		})
 	}
+
+	logger.SetReportCaller(base.CallerEnabled())
+
+	return &logrusHandler{
+		base:       base,
+		logger:     logger,
+		entry:      logrus.NewEntry(logger),
+		withCaller: base.CallerEnabled(),
+		withTrace:  base.TraceEnabled(),
+	}
+}
+
+// resolveFrame converts a PC to a source location string.
+func resolveFrame(pc uintptr) string {
+	frames := runtime.CallersFrames([]uintptr{pc})
+	frame, _ := frames.Next()
+	return fmt.Sprintf("%s:%d", frame.File, frame.Line)
 }
