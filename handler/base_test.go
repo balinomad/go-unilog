@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 
 // --- Helpers ---
 
-// newHandler is a test helper to create a BaseHandler, failing the test on error.
+// newHandler creates a BaseHandler, failing test on error.
 func newHandler(t *testing.T, opts *handler.BaseOptions) *handler.BaseHandler {
 	t.Helper()
 	h, err := handler.NewBaseHandler(opts)
@@ -31,7 +32,7 @@ func TestNewBaseHandler(t *testing.T) {
 	tests := []struct {
 		name     string
 		opts     *handler.BaseOptions
-		wantOpts handler.BaseOptions // Expected values after initialization
+		wantOpts handler.BaseOptions
 		wantErr  error
 	}{
 		{
@@ -76,7 +77,7 @@ func TestNewBaseHandler(t *testing.T) {
 			wantErr: handler.ErrAtomicWriterFail,
 		},
 		{
-			name: "success valid formats default",
+			name: "success valid formats default to first",
 			opts: &handler.BaseOptions{
 				Output:       io.Discard,
 				ValidFormats: validFormats,
@@ -114,6 +115,35 @@ func TestNewBaseHandler(t *testing.T) {
 			},
 			wantErr: handler.ErrInvalidFormat,
 		},
+		{
+			name: "success empty valid formats ignores format",
+			opts: &handler.BaseOptions{
+				Output:       io.Discard,
+				ValidFormats: nil,
+				Format:       "xml", // Not validated when ValidFormats is empty
+			},
+			wantOpts: handler.BaseOptions{
+				Output:    io.Discard,
+				Format:    "xml",
+				Separator: handler.DefaultKeySeparator,
+			},
+			wantErr: nil,
+		},
+		{
+			name: "defaults to first when format empty and valid formats set",
+			opts: &handler.BaseOptions{
+				Output:       io.Discard,
+				ValidFormats: []string{"text", "json"},
+				Format:       "",
+			},
+			wantOpts: handler.BaseOptions{
+				Output:       io.Discard,
+				ValidFormats: []string{"text", "json"},
+				Format:       "text",
+				Separator:    handler.DefaultKeySeparator,
+			},
+			wantErr: nil,
+		},
 	}
 
 	for _, tc := range tests {
@@ -133,7 +163,7 @@ func TestNewBaseHandler(t *testing.T) {
 				if h != nil {
 					t.Fatalf("NewBaseHandler() handler = %v, want nil", h)
 				}
-				return // Test finished
+				return
 			}
 
 			if err != nil {
@@ -173,6 +203,7 @@ func TestNewBaseHandler(t *testing.T) {
 
 func TestBaseOption_WithLevel(t *testing.T) {
 	t.Parallel()
+
 	t.Run("success", func(t *testing.T) {
 		t.Parallel()
 		opts := &handler.BaseOptions{}
@@ -184,6 +215,7 @@ func TestBaseOption_WithLevel(t *testing.T) {
 			t.Errorf("Level = %v, want %v", opts.Level, handler.WarnLevel)
 		}
 	})
+
 	t.Run("invalid", func(t *testing.T) {
 		t.Parallel()
 		opts := &handler.BaseOptions{}
@@ -199,6 +231,7 @@ func TestBaseOption_WithLevel(t *testing.T) {
 
 func TestBaseOption_WithOutput(t *testing.T) {
 	t.Parallel()
+
 	t.Run("success", func(t *testing.T) {
 		t.Parallel()
 		opts := &handler.BaseOptions{}
@@ -210,6 +243,7 @@ func TestBaseOption_WithOutput(t *testing.T) {
 			t.Errorf("Output = %v, want %v", opts.Output, io.Discard)
 		}
 	})
+
 	t.Run("nil", func(t *testing.T) {
 		t.Parallel()
 		opts := &handler.BaseOptions{}
@@ -225,13 +259,43 @@ func TestBaseOption_WithOutput(t *testing.T) {
 
 func TestBaseOption_WithFormat(t *testing.T) {
 	t.Parallel()
-	opts := &handler.BaseOptions{}
-	err := handler.WithFormat("json")(opts)
-	if err != nil {
-		t.Fatalf("WithFormat() error = %v, want nil", err)
+
+	tests := []struct {
+		name    string
+		opts    *handler.BaseOptions
+		format  string
+		wantErr bool
+	}{
+		{
+			name:   "success no validation",
+			opts:   &handler.BaseOptions{},
+			format: "json",
+		},
+		{
+			name:   "success with valid formats",
+			opts:   &handler.BaseOptions{ValidFormats: []string{"json", "text"}},
+			format: "json",
+		},
+		{
+			name:    "error invalid format",
+			opts:    &handler.BaseOptions{ValidFormats: []string{"json", "text"}},
+			format:  "xml",
+			wantErr: true,
+		},
 	}
-	if opts.Format != "json" {
-		t.Errorf("Format = %q, want %q", opts.Format, "json")
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := handler.WithFormat(tt.format)(tt.opts)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("WithFormat() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && tt.opts.Format != tt.format {
+				t.Errorf("Format = %q, want %q", tt.opts.Format, tt.format)
+			}
+		})
 	}
 }
 
@@ -249,6 +313,7 @@ func TestBaseOption_WithSeparator(t *testing.T) {
 
 func TestBaseOption_WithCaller(t *testing.T) {
 	t.Parallel()
+
 	t.Run("true", func(t *testing.T) {
 		t.Parallel()
 		opts := &handler.BaseOptions{}
@@ -260,6 +325,7 @@ func TestBaseOption_WithCaller(t *testing.T) {
 			t.Error("WithCaller = false, want true")
 		}
 	})
+
 	t.Run("false", func(t *testing.T) {
 		t.Parallel()
 		opts := &handler.BaseOptions{WithCaller: true}
@@ -275,6 +341,7 @@ func TestBaseOption_WithCaller(t *testing.T) {
 
 func TestBaseOption_WithTrace(t *testing.T) {
 	t.Parallel()
+
 	t.Run("true", func(t *testing.T) {
 		t.Parallel()
 		opts := &handler.BaseOptions{}
@@ -286,6 +353,7 @@ func TestBaseOption_WithTrace(t *testing.T) {
 			t.Error("WithTrace = false, want true")
 		}
 	})
+
 	t.Run("false", func(t *testing.T) {
 		t.Parallel()
 		opts := &handler.BaseOptions{WithTrace: true}
@@ -304,6 +372,7 @@ func TestBaseOption_WithTrace(t *testing.T) {
 // TestBaseHandler_StateAccessors verifies getters (Level, Format, etc.).
 func TestBaseHandler_StateAccessors(t *testing.T) {
 	t.Parallel()
+
 	opts := &handler.BaseOptions{
 		Level:      handler.WarnLevel,
 		Output:     io.Discard,
@@ -348,6 +417,7 @@ func TestBaseHandler_StateAccessors(t *testing.T) {
 // TestBaseHandler_Enabled verifies the Enabled method logic.
 func TestBaseHandler_Enabled(t *testing.T) {
 	t.Parallel()
+
 	opts := &handler.BaseOptions{
 		Level:  handler.InfoLevel,
 		Output: io.Discard,
@@ -380,6 +450,7 @@ func TestBaseHandler_Enabled(t *testing.T) {
 // TestBaseHandler_FlagManagement verifies HasFlag and SetFlag.
 func TestBaseHandler_FlagManagement(t *testing.T) {
 	t.Parallel()
+
 	opts := &handler.BaseOptions{
 		Output:     io.Discard,
 		WithCaller: false,
@@ -388,10 +459,10 @@ func TestBaseHandler_FlagManagement(t *testing.T) {
 	h := newHandler(t, opts)
 
 	if h.HasFlag(handler.FlagCaller) {
-		t.Fatal("HasFlag(FlagCaller) = true, want false (initial)")
+		t.Fatal("HasFlag(FlagCaller) = true, want false")
 	}
 	if h.HasFlag(handler.FlagTrace) {
-		t.Fatal("HasFlag(FlagTrace) = true, want false (initial)")
+		t.Fatal("HasFlag(FlagTrace) = true, want false")
 	}
 
 	// Set Caller
@@ -434,6 +505,7 @@ func TestBaseHandler_FlagManagement(t *testing.T) {
 // TestBaseHandler_FlagManagement_Concurrent verifies SetFlag is atomic.
 func TestBaseHandler_FlagManagement_Concurrent(t *testing.T) {
 	t.Parallel()
+
 	opts := &handler.BaseOptions{
 		Output: io.Discard,
 	}
@@ -508,6 +580,7 @@ func TestBaseHandler_SetLevel(t *testing.T) {
 
 func TestBaseHandler_SetOutput(t *testing.T) {
 	t.Parallel()
+
 	t.Run("success", func(t *testing.T) {
 		t.Parallel()
 		var buf1, buf2 bytes.Buffer
@@ -573,6 +646,7 @@ func TestBaseHandler_SetCallerSkip(t *testing.T) {
 // TestBaseHandler_MutableSetters_Concurrent verifies setters are thread-safe.
 func TestBaseHandler_MutableSetters_Concurrent(t *testing.T) {
 	t.Parallel()
+
 	h := newHandler(t, &handler.BaseOptions{Level: handler.InfoLevel, Output: io.Discard})
 	var buf1, buf2 bytes.Buffer
 
@@ -625,6 +699,7 @@ func TestBaseHandler_MutableSetters_Concurrent(t *testing.T) {
 
 func TestBaseHandler_WithLevel(t *testing.T) {
 	t.Parallel()
+
 	h1 := newHandler(t, &handler.BaseOptions{Level: handler.InfoLevel, Output: io.Discard})
 
 	t.Run("change", func(t *testing.T) {
@@ -673,6 +748,7 @@ func TestBaseHandler_WithLevel(t *testing.T) {
 
 func TestBaseHandler_WithCaller(t *testing.T) {
 	t.Parallel()
+
 	h1 := newHandler(t, &handler.BaseOptions{Output: io.Discard, WithCaller: false})
 
 	t.Run("enable", func(t *testing.T) {
@@ -700,6 +776,7 @@ func TestBaseHandler_WithCaller(t *testing.T) {
 
 func TestBaseHandler_WithTrace(t *testing.T) {
 	t.Parallel()
+
 	h1 := newHandler(t, &handler.BaseOptions{Output: io.Discard, WithTrace: false})
 
 	t.Run("enable", func(t *testing.T) {
@@ -725,29 +802,32 @@ func TestBaseHandler_WithTrace(t *testing.T) {
 	})
 }
 
+// TestBaseHandler_WithKeyPrefix verifies prefix construction and error handling.
 func TestBaseHandler_WithKeyPrefix(t *testing.T) {
 	t.Parallel()
-	h1 := newHandler(t, &handler.BaseOptions{Output: io.Discard, Separator: "_"})
+
 	t.Run("initial prefix", func(t *testing.T) {
 		t.Parallel()
-		h2, err := h1.WithKeyPrefix("group1")
+		h := newHandler(t, &handler.BaseOptions{Output: io.Discard, Separator: "_"})
+		h2, err := h.WithKeyPrefix("group1")
 		if err != nil {
 			t.Fatalf("WithKeyPrefix(group1) error = %v, want nil", err)
 		}
-		if h2 == h1 {
+		if h2 == h {
 			t.Fatal("WithKeyPrefix(group1) returned original instance, want new")
 		}
 		if got := h2.KeyPrefix(); got != "group1" {
 			t.Errorf("h2.KeyPrefix() = %q, want %q", got, "group1")
 		}
-		if got := h1.KeyPrefix(); got != "" {
+		if got := h.KeyPrefix(); got != "" {
 			t.Errorf("h1.KeyPrefix() = %q, want %q (original mutated)", got, "")
 		}
 	})
 
 	t.Run("append prefix", func(t *testing.T) {
 		t.Parallel()
-		h2, err := h1.WithKeyPrefix("group1")
+		h := newHandler(t, &handler.BaseOptions{Output: io.Discard, Separator: "_"})
+		h2, err := h.WithKeyPrefix("group1")
 		if err != nil {
 			t.Fatalf("WithKeyPrefix(group1) error = %v, want nil", err)
 		}
@@ -765,10 +845,32 @@ func TestBaseHandler_WithKeyPrefix(t *testing.T) {
 			t.Errorf("h2.KeyPrefix() = %q, want %q (original mutated)", got, "group1")
 		}
 	})
+
+	t.Run("error exceeds maximum length", func(t *testing.T) {
+		t.Parallel()
+		h := newHandler(t, &handler.BaseOptions{Output: io.Discard, Separator: "_"})
+
+		// Build a prefix close to maxKeyPrefixLength (10000)
+		longPrefix := strings.Repeat("a", 5000)
+		h2, err := h.WithKeyPrefix(longPrefix)
+		if err != nil {
+			t.Fatalf("WithKeyPrefix(5000 chars) error = %v, want nil", err)
+		}
+
+		// Attempt to add another prefix that exceeds limit
+		_, err = h2.WithKeyPrefix(longPrefix)
+		if err == nil {
+			t.Fatal("WithKeyPrefix(exceeds limit) error = nil, want non-nil")
+		}
+		if !strings.Contains(err.Error(), "exceeds maximum") {
+			t.Errorf("error message %q does not contain 'exceeds maximum'", err.Error())
+		}
+	})
 }
 
 func TestBaseHandler_WithCallerSkip(t *testing.T) {
 	t.Parallel()
+
 	h1 := newHandler(t, &handler.BaseOptions{Output: io.Discard, CallerSkip: 1})
 
 	t.Run("change", func(t *testing.T) {
@@ -816,6 +918,7 @@ func TestBaseHandler_WithCallerSkip(t *testing.T) {
 
 func TestBaseHandler_WithCallerSkipDelta(t *testing.T) {
 	t.Parallel()
+
 	h1 := newHandler(t, &handler.BaseOptions{Output: io.Discard, CallerSkip: 1})
 
 	t.Run("change positive", func(t *testing.T) {
@@ -877,6 +980,7 @@ func TestBaseHandler_WithCallerSkipDelta(t *testing.T) {
 
 func TestBaseHandler_WithOutput(t *testing.T) {
 	t.Parallel()
+
 	t.Run("success", func(t *testing.T) {
 		t.Parallel()
 		var buf1, buf2 bytes.Buffer

@@ -65,7 +65,7 @@ func TestNewErrorWrappers(t *testing.T) {
 			},
 		},
 		{
-			name:    "invalid log level error below min",
+			name:    "invalid log level below min",
 			err:     handler.NewInvalidLogLevelError(handler.MinLevel - 1),
 			wantErr: handler.ErrInvalidLogLevel,
 			wantContains: []string{
@@ -76,7 +76,7 @@ func TestNewErrorWrappers(t *testing.T) {
 			},
 		},
 		{
-			name:    "invalid log level error above max",
+			name:    "invalid log level above max",
 			err:     handler.NewInvalidLogLevelError(handler.MaxLevel + 1),
 			wantErr: handler.ErrInvalidLogLevel,
 			wantContains: []string{

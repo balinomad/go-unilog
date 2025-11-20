@@ -225,6 +225,11 @@ func TestHandlerFeatures_String(t *testing.T) {
 			hf:   handler.NewHandlerFeatures(featUnknown | handler.FeatNativeCaller | featUnknown2),
 			want: fmt.Sprintf("0x%X|0x%X|FeatNativeCaller", uint32(featUnknown2), uint32(featUnknown)),
 		},
+		{
+			name: "non contiguous unknown bits",
+			hf:   handler.NewHandlerFeatures((1 << 29) | (1 << 31)),
+			want: fmt.Sprintf("0x%X|0x%X", uint32(1<<29), uint32(1<<31)),
+		},
 	}
 
 	for _, tt := range tests {
@@ -251,37 +256,37 @@ func TestFeature_String(t *testing.T) {
 		want string
 	}{
 		{
-			name: "FeatNativeCaller",
+			name: "native caller",
 			f:    handler.FeatNativeCaller,
 			want: "FeatNativeCaller",
 		},
 		{
-			name: "FeatNativeGroup",
+			name: "native group",
 			f:    handler.FeatNativeGroup,
 			want: "FeatNativeGroup",
 		},
 		{
-			name: "FeatBufferedOutput",
+			name: "buffered output",
 			f:    handler.FeatBufferedOutput,
 			want: "FeatBufferedOutput",
 		},
 		{
-			name: "FeatContextPropagation",
+			name: "context propagation",
 			f:    handler.FeatContextPropagation,
 			want: "FeatContextPropagation",
 		},
 		{
-			name: "FeatDynamicLevel",
+			name: "dynamic level",
 			f:    handler.FeatDynamicLevel,
 			want: "FeatDynamicLevel",
 		},
 		{
-			name: "FeatDynamicOutput",
+			name: "dynamic output",
 			f:    handler.FeatDynamicOutput,
 			want: "FeatDynamicOutput",
 		},
 		{
-			name: "FeatZeroAlloc",
+			name: "zero alloc",
 			f:    handler.FeatZeroAlloc,
 			want: "FeatZeroAlloc",
 		},

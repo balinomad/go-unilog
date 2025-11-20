@@ -21,8 +21,8 @@ func TestLogLevel_String(t *testing.T) {
 		{"critical level", handler.CriticalLevel, "CRITICAL"},
 		{"fatal level", handler.FatalLevel, "FATAL"},
 		{"panic level", handler.PanicLevel, "PANIC"},
-		{"below minimum level", handler.MinLevel - 1, fmt.Sprintf("UNKNOWN (%d)", handler.MinLevel-1)},
-		{"above maximum level", handler.MaxLevel + 1, fmt.Sprintf("UNKNOWN (%d)", handler.MaxLevel+1)},
+		{"below minimum", handler.MinLevel - 1, fmt.Sprintf("UNKNOWN (%d)", handler.MinLevel-1)},
+		{"above maximum", handler.MaxLevel + 1, fmt.Sprintf("UNKNOWN (%d)", handler.MaxLevel+1)},
 		{"far below minimum", handler.MinLevel - 100, fmt.Sprintf("UNKNOWN (%d)", handler.MinLevel-100)},
 		{"far above maximum", handler.MaxLevel + 100, fmt.Sprintf("UNKNOWN (%d)", handler.MaxLevel+100)},
 	}
