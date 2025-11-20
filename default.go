@@ -2,18 +2,25 @@ package unilog
 
 import (
 	"context"
-	"os"
 	"sync"
 )
 
-// internalDefaultSkipFrames is the number of stack frames to skip when logging
-// using the global default logger.
+// packageAdditionalSkipFrame is the additional skip frames added when using
+// package-level logging functions (Info, Error, etc.) compared to direct logger methods.
 //
-// Frames to skip:
+// Call stack comparison:
 //
-//	1: unilog.Log, unilog.LogWithSkip, or convenience methods (e.g. unilog.Info, unilog.Error)
-//	2: unilog.logWithDefault
-const internalDefaultSkipFrames = 2
+// Package function:               Direct logger method:
+//  1. main.go:42 (user)            1. main.go:42 (user)
+//  2. unilog.Info()                2. logger.Info()
+//  3. logWithDefault()             3. logger.log()
+//  4. logger.LogWithSkip()         4. [handler backend]
+//  5. logger.log()
+//  6. [handler backend]
+//
+// Package functions add 2 extra frames (unilog.Info + logWithDefault).
+// These are added ON TOP OF the logger's loggerMethodSkipFrames.
+const packageAdditionalSkipFrame = 2
 
 // global is the global default logger instance.
 // It is initialized on first use.
@@ -21,6 +28,22 @@ var global = struct {
 	mu     sync.Mutex
 	logger Logger
 }{}
+
+// globalFallback is the global fallback logger used when handler.Handle() fails.
+// Initialized lazily on first error to avoid startup overhead.
+var globalFallback = struct {
+	once sync.Once
+	l    *fallbackLogger
+}{}
+
+// getGlobalFallback returns the global fallback logger, initializing it on first call.
+// Used by logger.log() when handler.Handle() returns an error.
+func getGlobalFallback() *fallbackLogger {
+	globalFallback.once.Do(func() {
+		globalFallback.l = newSimpleFallbackLogger()
+	})
+	return globalFallback.l
+}
 
 // SetDefault sets the global default logger instance.
 func SetDefault(l Logger) {
@@ -30,18 +53,14 @@ func SetDefault(l Logger) {
 }
 
 // Default returns the global default logger instance. If no logger has been set,
-// it initializes a fallback standard logger (stdlog) to ensure that logging
-// calls do not cause a panic.
+// it initializes a fallback logger with stderr output and InfoLevel.
+// Never panics; always returns a usable logger.
 func Default() Logger {
 	global.mu.Lock()
 	defer global.mu.Unlock()
 
 	if global.logger == nil {
-		l, err := newFallbackLogger(os.Stderr, InfoLevel)
-		if err != nil {
-			panic(err)
-		}
-		global.logger = l
+		global.logger = newSimpleFallbackLogger()
 	}
 
 	return global.logger
@@ -51,8 +70,7 @@ func Default() Logger {
 func logWithDefault(ctx context.Context, level LogLevel, msg string, skip int, keyValues ...any) {
 	dl := Default()
 	if adv, ok := dl.(AdvancedLogger); ok {
-		// Skip two additional frames to account for this function and the caller
-		adv.LogWithSkip(ctx, level, msg, skip+internalDefaultSkipFrames, keyValues...)
+		adv.LogWithSkip(ctx, level, msg, skip+packageAdditionalSkipFrame, keyValues...)
 		return
 	}
 	dl.Log(ctx, level, msg, keyValues...)

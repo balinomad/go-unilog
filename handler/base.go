@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"sync"
@@ -128,16 +129,22 @@ func WithTrace(enabled bool) BaseOption {
 //   - Configuration changes (cold path) can tolerate mutex overhead
 //   - Handlers should cache flag states at init for zero-lock logging
 //
+// Performance:
+//   - Handlers SHOULD cache immutable config (format, separator) at initialization
+//     to avoid RWMutex contention in hot path. See handler/slog for example.
+//   - Mutable config (level, output) uses atomics/AtomicWriter for lock-free access.
+//
 // Mutability semantics:
 //   - Set* methods mutate in-place (affect shared state)
 //   - With* methods return new instances (immutable pattern)
-//   - Clone() creates independent copy with separate mutex
+//   - Clone() creates independent copy with separate mutex but shared AtomicWriter
 //
 // Example handler optimization:
 //
 //	type myHandler struct {
 //	    base        *BaseHandler
 //	    needsCaller bool // Cached at init
+//	    format      string // Cached at init
 //	}
 //	func (h *myHandler) Handle(...) {
 //	    if h.needsCaller { /* no lock */ }
@@ -160,6 +167,11 @@ type BaseHandler struct {
 	keyPrefix  string
 	separator  string
 }
+
+// maxKeyPrefixLength is the maximum total length of accumulated key prefixes.
+// Prevents pathological cases with deep nesting or long key names.
+// 10,000 characters should handle reasonable nesting (e.g., 100 levels * 100 chars each).
+const maxKeyPrefixLength = 10000
 
 // Ensure BaseHandler implements HandlerState
 var _ HandlerState = (*BaseHandler)(nil)
@@ -347,12 +359,14 @@ func (h *BaseHandler) SetCallerSkip(skip int) error {
 
 // Clone returns a shallow copy of BaseHandler with independent mutex.
 // The new instance shares the AtomicWriter but has separate state locks.
+// This means SetOutput() on the clone affects the original's output destination.
+// For fully independent handlers, create separate handler instances with different writers.
 func (h *BaseHandler) Clone() *BaseHandler {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	clone := &BaseHandler{
-		out:        h.out,
+		out:        h.out, // Shared writer - SetOutput() affects original
 		format:     h.format,
 		callerSkip: h.callerSkip,
 		keyPrefix:  h.keyPrefix,
@@ -409,7 +423,23 @@ func (h *BaseHandler) WithTrace(enabled bool) *BaseHandler {
 
 // WithKeyPrefix returns a shallow copy of BaseHandler with the given prefix applied.
 // This supports WithGroup for handlers without native prefix support.
-func (h *BaseHandler) WithKeyPrefix(prefix string) *BaseHandler {
+// Returns error if total prefix length exceeds maxKeyPrefixLength.
+func (h *BaseHandler) WithKeyPrefix(prefix string) (*BaseHandler, error) {
+	h.mu.RLock()
+	currentPrefix := h.keyPrefix
+	sep := h.separator
+	h.mu.RUnlock()
+
+	// Calculate new prefix length
+	newPrefixLen := len(prefix)
+	if currentPrefix != "" {
+		newPrefixLen += len(currentPrefix) + len(sep)
+	}
+
+	if newPrefixLen > maxKeyPrefixLength {
+		return nil, fmt.Errorf("key prefix length (%d) exceeds maximum (%d characters)", newPrefixLen, maxKeyPrefixLength)
+	}
+
 	clone := h.Clone()
 
 	if clone.keyPrefix == "" {
@@ -418,7 +448,7 @@ func (h *BaseHandler) WithKeyPrefix(prefix string) *BaseHandler {
 		clone.keyPrefix = clone.keyPrefix + clone.separator + prefix
 	}
 
-	return clone
+	return clone, nil
 }
 
 // WithCallerSkip returns a shallow copy of BaseHandler with updated caller skip.
@@ -460,7 +490,10 @@ func (h *BaseHandler) WithCallerSkipDelta(delta int) (*BaseHandler, error) {
 	return h.WithCallerSkip(skip)
 }
 
-// WithLevel returns a new BaseHandler with output set.
+// WithOutput returns a new BaseHandler with output set.
+// Error is returned for nil writer or if AtomicWriter creation fails.
+// Current implementation only fails on nil writer, but error return is kept
+// for future extensibility (e.g., writer validation, resource acquisition).
 func (h *BaseHandler) WithOutput(w io.Writer) (*BaseHandler, error) {
 	if w == nil {
 		return nil, ErrNilWriter

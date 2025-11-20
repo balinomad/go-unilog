@@ -10,5 +10,8 @@ var XLoggerKey = loggerKey
 // XNewFallbackLogger creates a fallback logger for testing.
 var XNewFallbackLogger = newFallbackLogger
 
+// XNewSimpleFallbackLogger creates a simple fallback logger for testing.
+var XNewSimpleFallbackLogger = newSimpleFallbackLogger
+
 // XFallbackLogger exposes the fallback logger type for testing.
 type XFallbackLogger = fallbackLogger

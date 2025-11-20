@@ -15,22 +15,22 @@ var (
 	ErrNilWriter         = errors.New("writer cannot be nil")
 )
 
-// NewAtomicWriterError returns an error with ErrAtomicWriterFail.
+// NewAtomicWriterError returns an error wrapping ErrAtomicWriterFail.
 func NewAtomicWriterError(err error) error {
 	return fmt.Errorf("%w: %w", ErrAtomicWriterFail, err)
 }
 
-// NewOptionApplyError returns an error with ErrOptionApplyFailed.
+// NewOptionApplyError returns an error wrapping ErrOptionApplyFailed.
 func NewOptionApplyError(option string, err error) error {
-	return fmt.Errorf("%w: %s: %w", ErrOptionApplyFailed, option, err)
+	return fmt.Errorf("%w (%s): %w", ErrOptionApplyFailed, option, err)
 }
 
-// NewInvalidFormatError returns an error with ErrInvalidFormat.
+// NewInvalidFormatError returns an error wrapping ErrInvalidFormat.
 func NewInvalidFormatError(format string, accepted []string) error {
-	return fmt.Errorf("%w: %q, must be one of %v", ErrInvalidFormat, format, accepted)
+	return fmt.Errorf("%w: got %q, expected one of %v", ErrInvalidFormat, format, accepted)
 }
 
-// NewInvalidLogLevelError returns an error with ErrInvalidLogLevel when a LogLevel is out of range.
+// NewInvalidLogLevelError returns an error wrapping ErrInvalidLogLevel.
 func NewInvalidLogLevelError(level LogLevel) error {
-	return fmt.Errorf("%w: %d, must be between %d and %d", ErrInvalidLogLevel, level, MinLevel, MaxLevel)
+	return fmt.Errorf("%w: got %d, must be in range [%d, %d]", ErrInvalidLogLevel, level, MinLevel, MaxLevel)
 }

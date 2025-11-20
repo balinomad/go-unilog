@@ -12,8 +12,18 @@ import (
 	"github.com/balinomad/go-unilog/handler"
 )
 
-// logger wraps a handler.Handler to implement the Logger interface.
-// It is thread-safe.
+// logger provides the core Logger implementation that wraps handler.Handler.
+//
+// Concurrency Model:
+//   - Logger is safe for concurrent use by multiple goroutines
+//   - With/WithGroup return new instances (shallow copy semantics)
+//   - Set* methods mutate shared handler state when handler supports MutableConfig
+//   - Caller detection flags are cached at initialization for lock-free hot path
+//
+// Lifecycle:
+//   - Create via NewLogger() or NewAdvancedLogger()
+//   - Derive new loggers via With/WithGroup (shares handler state)
+//   - For independent loggers, create separate handler instances
 type logger struct {
 	mu sync.RWMutex
 
@@ -33,19 +43,28 @@ type logger struct {
 	skip      int
 }
 
-// Ensure logger implements required interfaces
+// Ensure logger implements required interfaces.
 var (
 	_ Logger         = (*logger)(nil)
 	_ AdvancedLogger = (*logger)(nil)
 	_ MutableLogger  = (*logger)(nil)
 )
 
-// internalSkipFrames is the number of stack frames between user call and backend.
+// internalSkipFrames is the number of stack frames from a logger method call
+// (e.g., logger.Info) to the point where runtime.Callers is invoked in logger.log().
 //
-// Stack frames:
-//  1. User code → logger.Info() / logger.Log()
-//  2. logger.Info() → logger.log()
-//  3. logger.log() → handler.Handle()
+// Call stack when user calls logger.Info():
+//  1. user code (e.g., main.go:42)       ← Target: capture this frame
+//  2. logger.Info() / logger.Log()       ← Skip
+//  3. logger.log()                       ← Skip
+//  4. [runtime.Callers called here]      ← Skip (implicit in Callers)
+//
+// To capture frame 1 from frame 3, we need skip=2 in the runtime.Callers() call.
+// However, runtime.Callers(skip) skips 'skip' frames BEFORE the Callers call itself.
+// Since we call runtime.Callers from frame 3, we use skip=2.
+//
+// But we store this as 3 to represent the total depth from user to logger.log(),
+// then subtract 1 when calling runtime.Callers: runtime.Callers(skip-1).
 const internalSkipFrames = 3
 
 // NewLogger creates a new logger that wraps the given handler.
@@ -54,6 +73,7 @@ func NewLogger(h handler.Handler) (Logger, error) {
 }
 
 // NewAdvancedLogger creates a new advanced logger that wraps the given handler.
+// Returns error if handler is nil or skip is negative.
 func NewAdvancedLogger(h handler.Handler) (AdvancedLogger, error) {
 	if h == nil {
 		return nil, errors.New("handler cannot be nil")
@@ -63,9 +83,13 @@ func NewAdvancedLogger(h handler.Handler) (AdvancedLogger, error) {
 }
 
 // newLogger creates a logger with specified skip offset.
+// Skip must be non-negative; panics on negative skip (internal invariant).
 func newLogger(h handler.Handler, skip int) *logger {
+	if skip < 0 {
+		panic("newLogger: skip must be non-negative")
+	}
+
 	// Apply skip to handler if supported
-	skip = max(skip, 0)
 	if adj, ok := h.(handler.CallerAdjuster); ok && skip > 0 {
 		h = adj.WithCallerSkip(skip)
 	}
@@ -77,7 +101,7 @@ func newLogger(h handler.Handler, skip int) *logger {
 		h:         h,
 		state:     state,
 		skip:      skip,
-		needsPC:   !features.Supports(handler.FeatNativeCaller),
+		needsPC:   !features.Supports(handler.FeatNativeCaller) && state.CallerEnabled(),
 		needsSkip: features.Supports(handler.FeatNativeCaller) && state.CallerEnabled(),
 	}
 
@@ -105,7 +129,10 @@ func (l *logger) log(ctx context.Context, level LogLevel, msg string, skipDelta 
 	}
 
 	l.mu.RLock()
-	defer l.mu.RUnlock()
+	currentSkip := l.skip
+	needsPC := l.needsPC
+	needsSkip := l.needsSkip
+	l.mu.RUnlock()
 
 	r := &handler.Record{
 		Time:      time.Now(),
@@ -115,20 +142,26 @@ func (l *logger) log(ctx context.Context, level LogLevel, msg string, skipDelta 
 	}
 
 	// Handle caller detection
-	skip := l.skip + skipDelta
-	if l.needsPC && skip > 0 {
+	skip := currentSkip + skipDelta
+	if needsPC && skip > 0 {
 		var pcs [1]uintptr
-		// skip-1 accounts for this frame not being in backend
+		// skip-1 because runtime.Callers itself adds implicit frame
 		if runtime.Callers(skip-1, pcs[:]) > 0 {
 			r.PC = pcs[0]
 		}
 	}
-	if l.needsSkip && skip > 0 {
+	if needsSkip && skip > 0 {
 		r.Skip = skip
 	}
 
-	// Ignore handler errors (logging must not crash application)
-	_ = l.h.Handle(ctx, r)
+	// Handle errors with global fallback logger
+	if err := l.h.Handle(ctx, r); err != nil {
+		fb := getGlobalFallback()
+		fb.Log(ctx, ErrorLevel, "log handler failed",
+			"original_level", level.String(),
+			"original_msg", msg,
+			"handler_error", err.Error())
+	}
 
 	// Handle termination levels
 	switch level {
@@ -248,7 +281,10 @@ func (l *logger) Sync() error {
 
 // WithCallerSkip returns a new logger with absolute caller skip set.
 func (l *logger) WithCallerSkip(skip int) AdvancedLogger {
-	skip = max(skip, 0) + internalSkipFrames
+	if skip < 0 {
+		skip = 0
+	}
+	skip += internalSkipFrames
 
 	l.mu.RLock()
 	currentSkip := l.skip
@@ -328,7 +364,6 @@ func (l *logger) WithOutput(w io.Writer) AdvancedLogger {
 // --- Helper Methods ---
 
 // cloneWithHandler creates a new logger with the given handler.
-// Handler must embed handler.Handler (all extension interfaces do).
 func (l *logger) cloneWithHandler(h handler.Handler) Logger {
 	return newLogger(h, l.skip)
 }

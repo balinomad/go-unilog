@@ -314,30 +314,33 @@ func TestBaseHandler_StateAccessors(t *testing.T) {
 		Separator:  "::",
 	}
 	h := newHandler(t, opts)
-	h = h.WithKeyPrefix("group1") // Set prefix for KeyPrefix test
+	h2, err := h.WithKeyPrefix("group1")
+	if err != nil {
+		t.Fatalf("WithKeyPrefix failed: %v", err)
+	}
 
-	if got := h.Level(); got != handler.WarnLevel {
+	if got := h2.Level(); got != handler.WarnLevel {
 		t.Errorf("Level() = %v, want %v", got, handler.WarnLevel)
 	}
-	if got := h.Format(); got != "text" {
+	if got := h2.Format(); got != "text" {
 		t.Errorf("Format() = %q, want %q", got, "text")
 	}
-	if got := h.CallerEnabled(); got != true {
+	if got := h2.CallerEnabled(); got != true {
 		t.Errorf("CallerEnabled() = %v, want %v", got, true)
 	}
-	if got := h.TraceEnabled(); got != false {
+	if got := h2.TraceEnabled(); got != false {
 		t.Errorf("TraceEnabled() = %v, want %v", got, false)
 	}
-	if got := h.CallerSkip(); got != 2 {
+	if got := h2.CallerSkip(); got != 2 {
 		t.Errorf("CallerSkip() = %v, want %v", got, 2)
 	}
-	if got := h.Separator(); got != "::" {
+	if got := h2.Separator(); got != "::" {
 		t.Errorf("Separator() = %q, want %q", got, "::")
 	}
-	if got := h.KeyPrefix(); got != "group1" {
+	if got := h2.KeyPrefix(); got != "group1" {
 		t.Errorf("KeyPrefix() = %q, want %q", got, "group1")
 	}
-	if h.AtomicWriter() == nil {
+	if h2.AtomicWriter() == nil {
 		t.Error("AtomicWriter() = nil, want non-nil")
 	}
 }
@@ -575,18 +578,19 @@ func TestBaseHandler_MutableSetters_Concurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	const goroutines = 100
-	wg.Add(goroutines * 4)
 
 	levels := []handler.LogLevel{handler.TraceLevel, handler.DebugLevel, handler.InfoLevel, handler.WarnLevel, handler.ErrorLevel}
 
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		i := i
 		// SetLevel
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			_ = h.SetLevel(levels[i%len(levels)])
 		}()
 		// SetOutput
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if i%2 == 0 {
@@ -596,6 +600,7 @@ func TestBaseHandler_MutableSetters_Concurrent(t *testing.T) {
 			}
 		}()
 		// SetCallerSkip
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			_ = h.SetCallerSkip(i)
@@ -609,9 +614,6 @@ func TestBaseHandler_MutableSetters_Concurrent(t *testing.T) {
 	}
 	if got := h.CallerSkip(); got < 0 || got >= goroutines {
 		t.Fatalf("CallerSkip() = %v, want value in [0, %d)", got, goroutines)
-	}
-	if got := h.Separator(); got != "." && got != "_" {
-		t.Fatalf("Separator() = %q, want '.' or '_'", got)
 	}
 	// Write to ensure writer is valid
 	if _, err := h.AtomicWriter().Write([]byte("test")); err != nil {
@@ -728,7 +730,10 @@ func TestBaseHandler_WithKeyPrefix(t *testing.T) {
 	h1 := newHandler(t, &handler.BaseOptions{Output: io.Discard, Separator: "_"})
 	t.Run("initial prefix", func(t *testing.T) {
 		t.Parallel()
-		h2 := h1.WithKeyPrefix("group1")
+		h2, err := h1.WithKeyPrefix("group1")
+		if err != nil {
+			t.Fatalf("WithKeyPrefix(group1) error = %v, want nil", err)
+		}
 		if h2 == h1 {
 			t.Fatal("WithKeyPrefix(group1) returned original instance, want new")
 		}
@@ -742,8 +747,14 @@ func TestBaseHandler_WithKeyPrefix(t *testing.T) {
 
 	t.Run("append prefix", func(t *testing.T) {
 		t.Parallel()
-		h2 := h1.WithKeyPrefix("group1")
-		h3 := h2.WithKeyPrefix("group2")
+		h2, err := h1.WithKeyPrefix("group1")
+		if err != nil {
+			t.Fatalf("WithKeyPrefix(group1) error = %v, want nil", err)
+		}
+		h3, err := h2.WithKeyPrefix("group2")
+		if err != nil {
+			t.Fatalf("WithKeyPrefix(group2) error = %v, want nil", err)
+		}
 		if h3 == h2 {
 			t.Fatal("WithKeyPrefix(group2) returned original instance, want new")
 		}

@@ -7,43 +7,55 @@ import (
 	"log"
 	"os"
 	"strings"
-	"sync/atomic"
+	"sync"
 
-	"github.com/balinomad/go-atomicwriter"
 	"github.com/balinomad/go-unilog/handler"
 )
 
 // fallbackLogger provides a minimal, panic-safe Logger implementation.
-// It is used as the default logger when no other logger has been configured via SetDefault.
+// It is used as the default logger when no other logger has been configured via SetDefault,
+// and as a global error recovery mechanism when handler.Handle() fails.
 // Safe for concurrent use by multiple goroutines.
 //
-// Not meant for production use.
+// Not meant for production use. Applications should configure a proper handler-backed logger.
 type fallbackLogger struct {
-	w   *atomicwriter.AtomicWriter
+	mu  sync.Mutex
+	w   io.Writer
 	l   *log.Logger
-	lvl atomic.Int32
+	lvl handler.LogLevel
 }
 
-// Ensure fallbackLogger implements the following interfaces.
-var (
-	_ Logger        = (*fallbackLogger)(nil)
-	_ MutableLogger = (*fallbackLogger)(nil)
-)
+// Ensure fallbackLogger implements Logger.
+var _ Logger = (*fallbackLogger)(nil)
 
-// newFallbackLogger creates a new fallbackLogger with the given output writer.
-func newFallbackLogger(w io.Writer, level LogLevel) (*fallbackLogger, error) {
-	aw, err := atomicwriter.NewAtomicWriter(w)
-	if err != nil {
+// newFallbackLogger creates a new fallbackLogger with the given output writer and level.
+// Returns error if writer is nil or level is invalid.
+func newFallbackLogger(w io.Writer, level handler.LogLevel) (*fallbackLogger, error) {
+	if w == nil {
+		return nil, ErrNilWriter
+	}
+	if err := handler.ValidateLogLevel(level); err != nil {
 		return nil, err
 	}
 
-	l := &fallbackLogger{
-		w: aw,
-		l: log.New(aw, "[FALLBACK] ", log.LstdFlags),
-	}
-	l.lvl.Store(int32(level))
+	return &fallbackLogger{
+		w:   w,
+		l:   log.New(w, "[FALLBACK] ", log.LstdFlags),
+		lvl: level,
+	}, nil
+}
 
-	return l, nil
+// newSimpleFallbackLogger creates a fallback logger with stderr output and InfoLevel.
+// Never returns error; panics only if os.Stderr is nil (should never happen).
+func newSimpleFallbackLogger() *fallbackLogger {
+	if os.Stderr == nil {
+		panic("os.Stderr is nil; cannot create fallback logger")
+	}
+
+	// Cannot fail: stderr is non-nil, InfoLevel is valid
+	l, _ := newFallbackLogger(os.Stderr, handler.InfoLevel)
+
+	return l
 }
 
 // Log prints a log message if the given level is enabled.
@@ -51,6 +63,9 @@ func (l *fallbackLogger) Log(_ context.Context, level LogLevel, msg string, keyV
 	if !l.Enabled(level) {
 		return
 	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	sb := strings.Builder{}
 	sb.WriteString(level.String())
@@ -76,30 +91,20 @@ func (l *fallbackLogger) Log(_ context.Context, level LogLevel, msg string, keyV
 
 // Enabled returns true if the given log level is enabled.
 func (l *fallbackLogger) Enabled(level LogLevel) bool {
-	return level >= LogLevel(l.lvl.Load())
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return level >= l.lvl
 }
 
-// With is a no-op for for the fallback logger. It returns itself unchanged.
+// With is a no-op for the fallback logger. It returns itself unchanged.
 func (l *fallbackLogger) With(keyValues ...any) Logger {
 	return l
 }
 
-// WithGroup is a no-op for for the fallback logger. It returns itself unchanged.
+// WithGroup is a no-op for the fallback logger. It returns itself unchanged.
 func (l *fallbackLogger) WithGroup(name string) Logger {
 	return l
-}
-
-func (l *fallbackLogger) SetLevel(level LogLevel) error {
-	if err := handler.ValidateLogLevel(level); err != nil {
-		return err
-	}
-	l.lvl.Store(int32(level))
-	return nil
-}
-
-// SetOutput swaps the log output atomically without blocking logging.
-func (l *fallbackLogger) SetOutput(w io.Writer) error {
-	return l.w.Swap(w)
 }
 
 // Trace logs a message at the trace level.
@@ -137,7 +142,7 @@ func (l *fallbackLogger) Fatal(ctx context.Context, msg string, keyValues ...any
 	l.Log(ctx, FatalLevel, msg, keyValues...)
 }
 
-// Panic logs a message at the fatal level and panics.
+// Panic logs a message at the panic level and panics.
 func (l *fallbackLogger) Panic(ctx context.Context, msg string, keyValues ...any) {
 	l.Log(ctx, PanicLevel, msg, keyValues...)
 }

@@ -1,6 +1,22 @@
 // Package handler is a feature normalization layer that allows any third-party logger
 // (regardless of native capabilities) to satisfy unilog's unified interface through
 // strategic backfilling of missing features.
+//
+// # Shared State Warning
+//
+// IMPORTANT: Chainer methods (WithAttrs, WithGroup) return NEW handlers that SHARE
+// mutable state (level, output) with the parent. This enables:
+//   - Runtime reconfiguration: parent.SetLevel(Debug) affects all children
+//   - Efficient request chains: minimal allocations for With() calls
+//
+// If you need independent loggers for different modules, use AdvancedHandler.WithLevel()
+// or create separate handler instances.
+//
+// Example:
+//
+//	parent := logger.With("service", "api")
+//	child := parent.With("endpoint", "/users")
+//	parent.SetLevel(Debug)  // Also affects child
 package handler
 
 import (
@@ -35,6 +51,9 @@ type Handler interface {
 	HandlerState() HandlerState
 
 	// Features returns the handler's supported features.
+	//
+	// MUST return a stable value; concurrent calls must be safe.
+	// Handler implementations should compute features once at initialization.
 	Features() HandlerFeatures
 }
 

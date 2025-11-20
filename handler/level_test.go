@@ -236,3 +236,127 @@ func TestLevelMapper_Map_IntType_CoversIndexingAndClamping(t *testing.T) {
 		})
 	}
 }
+
+func TestLevelMapper_OutOfBoundsClamping(t *testing.T) {
+	t.Parallel()
+
+	m := handler.NewLevelMapper(10, 11, 12, 13, 14, 15, 16, 17)
+
+	tests := []struct {
+		name  string
+		level handler.LogLevel
+		want  int
+	}{
+		{"far below min", handler.MinLevel - 100, 10},
+		{"just below min", handler.MinLevel - 1, 10},
+		{"at min", handler.MinLevel, 10},
+		{"at max", handler.MaxLevel, 17},
+		{"just above max", handler.MaxLevel + 1, 17},
+		{"far above max", handler.MaxLevel + 100, 17},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := m.Map(tt.level)
+			if got != tt.want {
+				t.Errorf("Map(%v) = %v, want %v", tt.level, got, tt.want)
+			}
+		})
+	}
+}
+func TestLevelMapper_ArraySizeMatchesLevelRange(t *testing.T) {
+	t.Parallel()
+
+	// The invariant: mappings array must have exactly (MaxLevel - MinLevel + 1) elements
+	// This test verifies that NewLevelMapper requires the correct number of arguments
+
+	// Level constants as of current implementation:
+	// TraceLevel = -1, DebugLevel = 0, InfoLevel = 1, WarnLevel = 2,
+	// ErrorLevel = 3, CriticalLevel = 4, FatalLevel = 5, PanicLevel = 6
+	expectedSize := int(handler.MaxLevel - handler.MinLevel + 1)
+
+	// Verify mapper handles all valid levels
+	m := handler.NewLevelMapper(0, 1, 2, 3, 4, 5, 6, 7)
+
+	// Verify it handles all valid levels without panic
+	for level := handler.MinLevel; level <= handler.MaxLevel; level++ {
+		result := m.Map(level)
+		expectedResult := int(level - handler.MinLevel)
+		if result != expectedResult {
+			t.Errorf("Map(%v) = %v, want %v", level, result, expectedResult)
+		}
+	}
+
+	// Verify the expected size matches actual
+	if expectedSize != 8 {
+		t.Logf("Note: Level range size is %d (MinLevel=%d, MaxLevel=%d)",
+			expectedSize, handler.MinLevel, handler.MaxLevel)
+	}
+}
+
+func TestLevelMapper_ClampingPreventsOutOfBounds(t *testing.T) {
+	t.Parallel()
+
+	// The invariant: min/max clamping ensures array indexing never panics
+	m := handler.NewLevelMapper("TRACE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL", "FATAL", "PANIC")
+
+	tests := []struct {
+		name  string
+		level handler.LogLevel
+		want  string
+	}{
+		{"far below min", handler.MinLevel - 100, "TRACE"},
+		{"just below min", handler.MinLevel - 1, "TRACE"},
+		{"at min (trace)", handler.TraceLevel, "TRACE"},
+		{"debug", handler.DebugLevel, "DEBUG"},
+		{"info", handler.InfoLevel, "INFO"},
+		{"warn", handler.WarnLevel, "WARN"},
+		{"error", handler.ErrorLevel, "ERROR"},
+		{"critical", handler.CriticalLevel, "CRITICAL"},
+		{"fatal", handler.FatalLevel, "FATAL"},
+		{"at max (panic)", handler.PanicLevel, "PANIC"},
+		{"just above max", handler.MaxLevel + 1, "PANIC"},
+		{"far above max", handler.MaxLevel + 100, "PANIC"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Should not panic
+			got := m.Map(tt.level)
+			if got != tt.want {
+				t.Errorf("Map(%v) = %v, want %v", tt.level, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLevelMapper_TypeSafety(t *testing.T) {
+	t.Parallel()
+
+	// Verify generic type parameter works with various types
+
+	t.Run("int mapper", func(t *testing.T) {
+		m := handler.NewLevelMapper(0, 1, 2, 3, 4, 5, 6, 7)
+		if got := m.Map(handler.InfoLevel); got != 2 {
+			t.Errorf("int mapper: Map(InfoLevel) = %d, want 2", got)
+		}
+	})
+
+	t.Run("string mapper", func(t *testing.T) {
+		m := handler.NewLevelMapper("a", "b", "c", "d", "e", "f", "g", "h")
+		if got := m.Map(handler.InfoLevel); got != "c" {
+			t.Errorf("string mapper: Map(InfoLevel) = %q, want 'c'", got)
+		}
+	})
+
+	t.Run("struct mapper", func(t *testing.T) {
+		type mapping struct{ value int }
+		m := handler.NewLevelMapper(
+			mapping{0}, mapping{1}, mapping{2}, mapping{3},
+			mapping{4}, mapping{5}, mapping{6}, mapping{7},
+		)
+		if got := m.Map(handler.InfoLevel); got.value != 2 {
+			t.Errorf("struct mapper: Map(InfoLevel).value = %d, want 2", got.value)
+		}
+	})
+}

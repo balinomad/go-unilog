@@ -60,6 +60,18 @@ func TestNewFallbackLogger(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:    "error on nil writer",
+			writer:  nil,
+			level:   unilog.InfoLevel,
+			wantErr: true,
+		},
+		{
+			name:    "error on invalid level",
+			writer:  &bytes.Buffer{},
+			level:   handler.MaxLevel + 1,
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -76,6 +88,26 @@ func TestNewFallbackLogger(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewSimpleFallbackLogger(t *testing.T) {
+	logger := unilog.XNewSimpleFallbackLogger()
+
+	if logger == nil {
+		t.Fatal("expected non-nil logger")
+	}
+
+	if !logger.Enabled(unilog.InfoLevel) {
+		t.Error("logger should be enabled at InfoLevel by default")
+	}
+
+	if logger.Enabled(unilog.DebugLevel) {
+		t.Error("logger should not be enabled below InfoLevel")
+	}
+
+	// Verify it can log (doesn't panic)
+	ctx := context.Background()
+	logger.Info(ctx, "test message")
 }
 
 func TestFallbackLogger_Log(t *testing.T) {
@@ -271,125 +303,6 @@ func TestFallbackLogger_WithGroup(t *testing.T) {
 
 	if logger != loggerWithGroup {
 		t.Error("WithGroup() should return the same instance for fallbackLogger")
-	}
-}
-
-func TestFallbackLogger_SetLevel(t *testing.T) {
-	tests := []struct {
-		name         string
-		initialLevel unilog.LogLevel
-		newLevel     unilog.LogLevel
-		wantErr      bool
-		checkFunc    func(t *testing.T, logger unilog.Logger)
-	}{
-		{
-			name:         "change from info to debug",
-			initialLevel: unilog.InfoLevel,
-			newLevel:     unilog.DebugLevel,
-			wantErr:      false,
-			checkFunc: func(t *testing.T, logger unilog.Logger) {
-				if !logger.Enabled(unilog.DebugLevel) {
-					t.Error("logger should be enabled at DebugLevel after SetLevel")
-				}
-			},
-		},
-		{
-			name:         "change from debug to error",
-			initialLevel: unilog.DebugLevel,
-			newLevel:     unilog.ErrorLevel,
-			wantErr:      false,
-			checkFunc: func(t *testing.T, logger unilog.Logger) {
-				if logger.Enabled(unilog.InfoLevel) {
-					t.Error("logger should not be enabled below ErrorLevel")
-				}
-				if !logger.Enabled(unilog.ErrorLevel) {
-					t.Error("logger should be enabled at ErrorLevel")
-				}
-			},
-		},
-		{
-			name:         "invalid level above max",
-			initialLevel: unilog.InfoLevel,
-			newLevel:     handler.MaxLevel + 1,
-			wantErr:      true,
-		},
-		{
-			name:         "invalid level below min",
-			initialLevel: unilog.InfoLevel,
-			newLevel:     handler.MinLevel - 1,
-			wantErr:      true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			logger, err := unilog.XNewFallbackLogger(io.Discard, tt.initialLevel)
-			if err != nil {
-				t.Fatalf("NewFallbackLogger() error = %v", err)
-			}
-
-			err = logger.SetLevel(tt.newLevel)
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("SetLevel() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if tt.checkFunc != nil && err == nil {
-				tt.checkFunc(t, logger)
-			}
-		})
-	}
-}
-
-func TestFallbackLogger_SetOutput(t *testing.T) {
-	tests := []struct {
-		name      string
-		testMsg   string
-		checkFunc func(t *testing.T, buf *bytes.Buffer)
-	}{
-		{
-			name:    "output written to new writer",
-			testMsg: "test message",
-			checkFunc: func(t *testing.T, buf *bytes.Buffer) {
-				if buf.Len() == 0 {
-					t.Error("expected output in new writer, got none")
-				}
-				if !strings.Contains(buf.String(), "test message") {
-					t.Errorf("expected message in output, got: %s", buf.String())
-				}
-			},
-		},
-		{
-			name:    "multiple writes to new output",
-			testMsg: "first",
-			checkFunc: func(t *testing.T, buf *bytes.Buffer) {
-				if !strings.Contains(buf.String(), "first") {
-					t.Error("expected first message in output")
-				}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			logger, err := unilog.XNewFallbackLogger(io.Discard, unilog.InfoLevel)
-			if err != nil {
-				t.Fatalf("NewFallbackLogger() error = %v", err)
-			}
-
-			newBuf := &bytes.Buffer{}
-			err = logger.SetOutput(newBuf)
-			if err != nil {
-				t.Fatalf("SetOutput() error = %v", err)
-			}
-
-			logger.Info(context.Background(), tt.testMsg)
-
-			if tt.checkFunc != nil {
-				tt.checkFunc(t, newBuf)
-			}
-		})
 	}
 }
 
