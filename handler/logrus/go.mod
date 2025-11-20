@@ -2,7 +2,7 @@ module github.com/balinomad/go-unilog/handler/logrus
 
 go 1.24.0
 
-require github.com/balinomad/go-unilog v0.0.0-20251119005402-f18cff37ed74
+require github.com/balinomad/go-unilog v0.0.0-20251119011455-1bd33c8d3b6d
 
 require github.com/balinomad/go-atomicwriter v1.0.1 // indirect
 
