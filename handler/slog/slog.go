@@ -44,8 +44,12 @@ func WithFormat(format string) SlogOption {
 	}
 }
 
-// WithCaller enables source injection. Optional skip overrides the user skip frames.
-func WithCaller(enabled bool, skip ...int) SlogOption {
+// WithCaller enables or disables source location reporting.
+// If enabled, the handler will include the source location
+// of the log call site in the log record.
+// This can be useful for debugging, but may incur a performance hit
+// due to the additional stack frame analysis. The default value is false.
+func WithCaller(enabled bool) SlogOption {
 	return func(o *slogOptions) error {
 		return handler.WithCaller(enabled)(o.base)
 	}
@@ -164,14 +168,13 @@ func (h *slogHandler) Handle(ctx context.Context, r *handler.Record) error {
 		attrs = append(attrs, slog.String("stack", string(debug.Stack())))
 	}
 
-	// Build slog.Record with PC for native caller support
+	// slog.NewRecord takes a PC. If unilog captured it (FeatNativeCaller=false), it is passed here.
+	// If AddSource is true in handlerOpts, slog uses this PC to resolve source.
 	rec := slog.NewRecord(r.Time, levelMapper.Map(r.Level), r.Message, r.PC)
 	rec.AddAttrs(attrs...)
 
 	// Use ctx for context propagation
-	h.logger.Handler().Handle(ctx, rec)
-
-	return nil
+	return h.logger.Handler().Handle(ctx, rec)
 }
 
 // Enabled checks if the given log level is enabled.
@@ -187,8 +190,7 @@ func (h *slogHandler) HandlerState() handler.HandlerState {
 // Features returns the supported HandlerFeatures.
 func (h *slogHandler) Features() handler.HandlerFeatures {
 	return handler.NewHandlerFeatures(
-		handler.FeatNativeCaller | // slog.HandlerOptions.AddSource
-			handler.FeatNativeGroup | // slog.Handler.WithGroup
+		handler.FeatNativeGroup | // slog.Handler.WithGroup
 			handler.FeatContextPropagation | // slog.Handler.Handle(ctx)
 			handler.FeatDynamicLevel |
 			handler.FeatDynamicOutput)

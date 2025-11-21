@@ -511,8 +511,15 @@ func (h *myHandler) Handle(ctx context.Context, r *handler.Record) error {
 
 ```go
 func (h *myHandler) WithGroup(name string) handler.Chainer {
+    if name == "" {
+        return h
+    }
+    base, err = h.base.WithKeyPrefix(name)
+    if  err != nil {
+        return h
+    }
     clone := h.shallowClone()
-    clone.base = h.base.WithKeyPrefix(name)
+    clone.base = base
     return clone
 }
 

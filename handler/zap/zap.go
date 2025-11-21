@@ -159,24 +159,21 @@ func New(opts ...ZapOption) (handler.Handler, error) {
 }
 
 // Handle implements the handler.Handler interface for zap.
-func (h *zapHandler) Handle(ctx context.Context, r *handler.Record) error {
+func (h *zapHandler) Handle(_ context.Context, r *handler.Record) error {
 	if !h.Enabled(r.Level) {
 		return nil
 	}
 
 	zl := h.logger
 
-	// Apply per-record dynamic skip
+	// Apply dynamic skip if needed
 	if h.withCaller && r.Skip != 0 {
 		zl = zl.WithOptions(zap.AddCallerSkip(r.Skip))
 	}
 
-	ce := zl.Check(levelMapper.Map(r.Level), r.Message)
-	if ce == nil {
-		return nil
+	if ce := zl.Check(levelMapper.Map(r.Level), r.Message); ce != nil {
+		ce.Write(keyValuesToZapFields(r.KeyValues)...)
 	}
-
-	ce.Write(keyValuesToZapFields(r.KeyValues)...)
 
 	return nil
 }
@@ -229,7 +226,6 @@ func (h *zapHandler) WithGroup(name string) handler.Chainer {
 
 // SetLevel dynamically changes the minimum level of logs that will be processed.
 func (h *zapHandler) SetLevel(level handler.LogLevel) error {
-	// Validate and store in base
 	if err := h.base.SetLevel(level); err != nil {
 		return err
 	}
@@ -257,14 +253,20 @@ func (h *zapHandler) WithCaller(enabled bool) handler.FeatureToggler {
 		return h
 	}
 
-	// Rebuild zapOpts with new caller state
-	newZapOpts := buildZapOpts(newBase)
-
 	clone := h.clone()
 	clone.base = newBase
+	clone.withCaller = enabled
+
+	// If enabling, we can use WithOptions to preserve existing fields/groups
+	if enabled {
+		clone.logger = h.logger.WithOptions(zap.AddCaller(), zap.AddCallerSkip(newBase.CallerSkip()))
+		return clone
+	}
+
+	// If disabling, we must rebuild (zap has no RemoveCaller), losing contextual fields.
+	newZapOpts := buildZapOpts(newBase)
 	clone.logger = zap.New(zapcore.NewCore(h.encoderFactory(), h.writeSyncer, h.atomicLevel), newZapOpts...)
 	clone.zapOpts = newZapOpts
-	clone.withCaller = enabled
 
 	return clone
 }
@@ -277,14 +279,20 @@ func (h *zapHandler) WithTrace(enabled bool) handler.FeatureToggler {
 		return h
 	}
 
-	// Rebuild zapOpts with new trace state
-	newZapOpts := buildZapOpts(newBase)
-
 	clone := h.clone()
 	clone.base = newBase
+	clone.withTrace = enabled
+
+	// Enable via WithOptions
+	if enabled {
+		clone.logger = h.logger.WithOptions(zap.AddStacktrace(zapcore.ErrorLevel))
+		return clone
+	}
+
+	// Disable via rebuild
+	newZapOpts := buildZapOpts(newBase)
 	clone.logger = zap.New(zapcore.NewCore(h.encoderFactory(), h.writeSyncer, h.atomicLevel), newZapOpts...)
 	clone.zapOpts = newZapOpts
-	clone.withTrace = enabled
 
 	return clone
 }
@@ -298,6 +306,7 @@ func (h *zapHandler) WithLevel(level handler.LogLevel) handler.Configurable {
 	}
 
 	newLevel := zap.NewAtomicLevelAt(levelMapper.Map(level))
+	// Deep clone required as we are changing the core's level ref
 	newZapOpts := make([]zap.Option, len(h.zapOpts))
 	copy(newZapOpts, h.zapOpts)
 
@@ -367,20 +376,14 @@ func (h *zapHandler) WithCallerSkipDelta(delta int) handler.CallerAdjuster {
 		return h
 	}
 
-	return &zapHandler{
-		base:           baseClone,
-		logger:         h.logger.WithOptions(zap.AddCallerSkip(delta)),
-		atomicLevel:    h.atomicLevel,
-		encoderFactory: h.encoderFactory,
-		writeSyncer:    h.writeSyncer,
-		zapOpts:        h.zapOpts,
-		withCaller:     h.withCaller,
-		withTrace:      h.withTrace,
-		callerSkip:     baseClone.CallerSkip(),
-	}
+	clone := h.clone()
+	clone.base = baseClone
+	clone.logger = h.logger.WithOptions(zap.AddCallerSkip(delta))
+	clone.callerSkip = baseClone.CallerSkip()
+
+	return clone
 }
 
-// Sync flushes any buffered log entries.
 func (h *zapHandler) Sync() error {
 	return h.logger.Sync()
 }
@@ -408,7 +411,7 @@ func buildZapOpts(base *handler.BaseHandler) []zap.Option {
 		opts = append(opts, zap.AddCaller(), zap.AddCallerSkip(base.CallerSkip()))
 	}
 	if base.TraceEnabled() {
-		// Adds stack trace to logs at Error level and above
+		// Add stack trace to logs at Error level and above
 		opts = append(opts, zap.AddStacktrace(zapcore.ErrorLevel))
 	}
 	return opts
@@ -447,10 +450,6 @@ func keyValuesToZapFields(keyValues []any) []zap.Field {
 // attrToZapField handles the most frequently logged concrete types and falls
 // back to zap.Any for the rest.
 func attrToZapField(key string, v any) zap.Field {
-	if v == nil {
-		return zap.Any(key, nil)
-	}
-
 	switch vv := v.(type) {
 	case string:
 		return zap.String(key, vv)

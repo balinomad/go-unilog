@@ -45,7 +45,11 @@ func WithFormat(format string) LogrusOption {
 	}
 }
 
-// WithCaller enables source location reporting.
+// WithCaller enables or disables source location reporting.
+// If enabled, the handler will include the source location
+// of the log call site in the log record.
+// This can be useful for debugging, but may incur a performance hit
+// due to the additional stack frame analysis. The default value is false.
 func WithCaller(enabled bool) LogrusOption {
 	return func(o *logrusOptions) error {
 		return handler.WithCaller(enabled)(o.base)
@@ -131,8 +135,8 @@ func New(opts ...LogrusOption) (handler.Handler, error) {
 		})
 	}
 
-	// Enable caller reporting if configured
-	logger.SetReportCaller(base.CallerEnabled())
+	// We can't use native logrus caller reporting, because skip frame is not supported
+	logger.SetReportCaller(false)
 
 	return &logrusHandler{
 		base:       base,
@@ -158,29 +162,27 @@ func (h *logrusHandler) Handle(ctx context.Context, r *handler.Record) error {
 	}
 
 	// Convert keyValues to logrus.Fields
-	fields := make(logrus.Fields, len(r.KeyValues)/2)
-	for i := 0; i < len(r.KeyValues)-1; i += 2 {
-		key := fmt.Sprint(r.KeyValues[i])
+	n := len(r.KeyValues)
+	fields := make(logrus.Fields, n/2+2)
+	for i := 0; i < n-1; i += 2 {
+		key, ok := r.KeyValues[i].(string)
+		if !ok {
+			key = fmt.Sprint(r.KeyValues[i])
+		}
 		fields[key] = r.KeyValues[i+1]
 	}
 
-	// Add fields to entry
-	if len(fields) > 0 {
-		entry = entry.WithFields(fields)
-	}
-
 	// Add caller if enabled and not already handled by logger
-	if h.withCaller && !h.logger.ReportCaller && r.PC != 0 {
-		frame := resolveFrame(r.PC)
-		entry = entry.WithField("caller", frame)
+	if h.withCaller && r.PC != 0 {
+		fields["caller"] = resolveFrame(r.PC)
 	}
 
 	// Add stack trace if enabled
 	if h.withTrace && r.Level >= handler.ErrorLevel {
-		entry = entry.WithField("stack", string(debug.Stack()))
+		fields["stack"] = string(debug.Stack())
 	}
 
-	entry.Log(levelMapper.Map(r.Level), r.Message)
+	entry.WithFields(fields).Log(levelMapper.Map(r.Level), r.Message)
 
 	return nil
 }
@@ -198,8 +200,7 @@ func (h *logrusHandler) HandlerState() handler.HandlerState {
 // Features returns the supported HandlerFeatures.
 func (h *logrusHandler) Features() handler.HandlerFeatures {
 	return handler.NewHandlerFeatures(
-		handler.FeatNativeCaller |
-			handler.FeatContextPropagation |
+		handler.FeatContextPropagation |
 			handler.FeatDynamicLevel |
 			handler.FeatDynamicOutput)
 }
@@ -211,9 +212,13 @@ func (h *logrusHandler) WithAttrs(keyValues []any) handler.Chainer {
 	}
 
 	// Convert keyValues to logrus.Fields
-	fields := make(logrus.Fields, len(keyValues)/2)
+	n := len(keyValues)
+	fields := make(logrus.Fields, n/2)
 	for i := 0; i < len(keyValues)-1; i += 2 {
-		key := fmt.Sprint(keyValues[i])
+		key, ok := keyValues[i].(string)
+		if !ok {
+			key = fmt.Sprint(keyValues[i])
+		}
 		fields[key] = keyValues[i+1]
 	}
 
@@ -229,8 +234,13 @@ func (h *logrusHandler) WithGroup(name string) handler.Chainer {
 		return h
 	}
 
+	base, err := h.base.WithKeyPrefix(name)
+	if err != nil {
+		return h
+	}
+
 	clone := h.clone()
-	clone.base = h.base.WithKeyPrefix(name)
+	clone.base = base
 
 	return clone
 }
@@ -354,12 +364,10 @@ func (h *logrusHandler) deepClone(base *handler.BaseHandler) *logrusHandler {
 		})
 	}
 
-	logger.SetReportCaller(base.CallerEnabled())
-
 	return &logrusHandler{
 		base:       base,
 		logger:     logger,
-		entry:      logrus.NewEntry(logger),
+		entry:      logrus.NewEntry(logger).WithFields(h.entry.Data),
 		withCaller: base.CallerEnabled(),
 		withTrace:  base.TraceEnabled(),
 	}

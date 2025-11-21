@@ -139,7 +139,10 @@ func (h *log15Handler) Handle(ctx context.Context, r *handler.Record) error {
 		return nil
 	}
 
-	fields := append(h.keyValues, r.KeyValues...)
+	// Combine handler attributes + record attributes
+	fields := make([]any, 0, len(h.keyValues)+len(r.KeyValues)+4)
+	fields = append(fields, h.keyValues...)
+	fields = append(fields, r.KeyValues...)
 
 	// Only compute caller if enabled
 	if h.withCaller && r.PC != 0 {
@@ -207,8 +210,13 @@ func (h *log15Handler) WithGroup(name string) handler.Chainer {
 		return h
 	}
 
+	base, err := h.base.WithKeyPrefix(name)
+	if err == nil {
+		return h
+	}
+
 	clone := h.clone()
-	clone.base = h.base.WithKeyPrefix(name)
+	clone.base = base
 
 	return clone
 }
@@ -296,7 +304,12 @@ func (h *log15Handler) WithCallerSkipDelta(delta int) handler.CallerAdjuster {
 		return h
 	}
 
-	return h.WithCallerSkip(h.CallerSkip() + delta)
+	newBase, err := h.base.WithCallerSkipDelta(delta)
+	if err != nil {
+		return h
+	}
+
+	return h.deepClone(newBase)
 }
 
 // clone returns a shallow copy of the handler.
@@ -330,9 +343,7 @@ func (h *log15Handler) deepClone(base *handler.BaseHandler) *log15Handler {
 func (h *log15Handler) buildLog15Handler() log15.Handler {
 	format := stringToFormat(h.base.Format())
 	handler := log15.StreamHandler(h.base.AtomicWriter(), format)
-	handler = log15.LvlFilterHandler(levelMapper.Map(h.base.Level()), handler)
-
-	return handler
+	return log15.LvlFilterHandler(levelMapper.Map(h.base.Level()), handler)
 }
 
 // setLog15Logger sets the log15.Logger to be used by the handler.

@@ -1,7 +1,7 @@
 github.com/balinomad/go-atomicwriter v1.0.1 h1:jUzEy3hsJwF/Tj9fm3A4HN+P84RjgXJfuoIBZJP8saw=
 github.com/balinomad/go-atomicwriter v1.0.1/go.mod h1:QaEVyXViHIIu61AYG580rjMHsGx2D0/w4GP4//sDezs=
-github.com/balinomad/go-unilog v0.0.0-20251121032513-732f0c1ea507 h1:KelXwToDrTWOEyE2VWUOV82NUTJ/A/0bknkjVWolop0=
-github.com/balinomad/go-unilog v0.0.0-20251121032513-732f0c1ea507/go.mod h1:CDFIQDrqCJZYH9dG3JwtXK0L0co6Oolx/BSsYiFdS0E=
+github.com/balinomad/go-unilog v0.0.0-20251121032946-11d98d413577 h1:TylsN5+73VFXB/QtwIoN0GYJzABRTlCS4mwO/Qj2kWQ=
+github.com/balinomad/go-unilog v0.0.0-20251121032946-11d98d413577/go.mod h1:CDFIQDrqCJZYH9dG3JwtXK0L0co6Oolx/BSsYiFdS0E=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

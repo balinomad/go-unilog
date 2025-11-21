@@ -10,12 +10,8 @@ import (
 	"strings"
 
 	"github.com/balinomad/go-caller"
-	"github.com/balinomad/go-ctxmap"
 	"github.com/balinomad/go-unilog/handler"
 )
-
-// fieldStringer returns a string representation of a key-value pair.
-var fieldStringer = func(k string, v any) string { return k + "=" + fmt.Sprint(v) }
 
 // stdLogOptions holds configuration for the standard logger.
 type stdLogOptions struct {
@@ -75,9 +71,9 @@ func WithFlags(flags int) StdLogOption {
 
 // stdLogHandler is a wrapper around Go's standard library log package.
 type stdLogHandler struct {
-	base   *handler.BaseHandler
-	logger *log.Logger
-	fields *ctxmap.CtxMap
+	base      *handler.BaseHandler
+	logger    *log.Logger
+	keyValues []any // Pre-formatted keys: "prefix_key", value...
 
 	// Cached from base for lock-free hot-path
 	withCaller bool
@@ -119,10 +115,9 @@ func New(opts ...StdLogOption) (handler.Handler, error) {
 	return &stdLogHandler{
 		base:       base,
 		logger:     log.New(base.AtomicWriter(), "", o.flags),
-		fields:     ctxmap.NewCtxMap(base.Separator(), " ", fieldStringer),
+		keyValues:  nil,
 		withCaller: base.CallerEnabled(),
 		withTrace:  base.TraceEnabled(),
-		separator:  base.Separator(),
 	}, nil
 }
 
@@ -132,9 +127,10 @@ func (h *stdLogHandler) Handle(_ context.Context, r *handler.Record) error {
 		return nil
 	}
 
-	// Pre-allocate builder with reasonable capacity
+	// Heuristic pre-allocation: message + existing attrs + new attrs + overhead
+	estSize := len(r.Message) + len(h.keyValues)*10 + len(r.KeyValues)*10 + 50
 	var sb strings.Builder
-	sb.Grow(160)
+	sb.Grow(estSize)
 
 	// Level prefix
 	sb.WriteString("[")
@@ -142,22 +138,38 @@ func (h *stdLogHandler) Handle(_ context.Context, r *handler.Record) error {
 	sb.WriteString("] ")
 	sb.WriteString(r.Message)
 
-	// Add key-value pairs
-	fields := h.fields.WithPairs(r.KeyValues...)
+	// Write baked-in attributes (prefixes already applied)
+	writePairs(&sb, h.keyValues)
+
+	// Write record attributes (apply current prefix)
+	currentPrefix := h.base.KeyPrefix()
+	separator := h.base.Separator()
+
+	for i := 0; i < len(r.KeyValues)-1; i += 2 {
+		sb.WriteString(" ")
+		if currentPrefix != "" {
+			sb.WriteString(currentPrefix)
+			sb.WriteString(separator)
+		}
+		key, ok := r.KeyValues[i].(string)
+		if !ok {
+			key = fmt.Sprint(r.KeyValues[i])
+		}
+		sb.WriteString(key)
+		sb.WriteString("=")
+		sb.WriteString(fmt.Sprint(r.KeyValues[i+1]))
+	}
 
 	// Only compute caller if enabled
 	if h.withCaller && r.PC != 0 {
-		fields.Set("source", caller.NewFromPC(r.PC).Location())
+		sb.WriteString(" source=")
+		sb.WriteString(caller.NewFromPC(r.PC).Location())
 	}
 
 	// Only capture stack if enabled and error-level
 	if h.withTrace && r.Level >= handler.ErrorLevel {
-		fields.Set("stack", string(debug.Stack()))
-	}
-
-	if fields.Len() > 0 {
-		sb.WriteString(" ")
-		sb.WriteString(fields.String())
+		sb.WriteString(" stack=")
+		sb.WriteString(string(debug.Stack()))
 	}
 
 	h.logger.Println(sb.String())
@@ -188,7 +200,30 @@ func (h *stdLogHandler) WithAttrs(keyValues []any) handler.Chainer {
 	}
 
 	clone := h.clone()
-	clone.fields = h.fields.WithPairs(keyValues)
+
+	// Bake prefix into new keys immediately
+	prefix := h.base.KeyPrefix()
+	sep := h.base.Separator()
+
+	// New slice size = old + new
+	newAttrs := make([]any, len(h.keyValues)+len(keyValues))
+	copy(newAttrs, h.keyValues)
+
+	// Append new items, formatting keys if needed
+	dest := newAttrs[len(h.keyValues):]
+	for i := 0; i < len(keyValues)-1; i += 2 {
+		key, ok := keyValues[i].(string)
+		if !ok {
+			key = fmt.Sprint(keyValues[i])
+		}
+		if prefix != "" {
+			key = prefix + sep + key
+		}
+		dest[i] = key
+		dest[i+1] = keyValues[i+1]
+	}
+
+	clone.keyValues = newAttrs
 
 	return clone
 }
@@ -199,8 +234,13 @@ func (h *stdLogHandler) WithGroup(name string) handler.Chainer {
 		return h
 	}
 
+	base, err := h.base.WithKeyPrefix(name)
+	if err != nil {
+		return h
+	}
+
 	clone := h.clone()
-	clone.fields = h.fields.WithPrefix(name)
+	clone.base = base
 
 	return clone
 }
@@ -295,7 +335,7 @@ func (h *stdLogHandler) clone() *stdLogHandler {
 	return &stdLogHandler{
 		base:       h.base,
 		logger:     h.logger,
-		fields:     h.fields,
+		keyValues:  h.keyValues,
 		withCaller: h.withCaller,
 		withTrace:  h.withTrace,
 		separator:  h.separator,
@@ -304,12 +344,29 @@ func (h *stdLogHandler) clone() *stdLogHandler {
 
 // deepClone returns a deep copy of the logger with a new BaseHandler.
 func (h *stdLogHandler) deepClone(base *handler.BaseHandler) *stdLogHandler {
+	kv := make([]any, len(h.keyValues))
+	copy(kv, h.keyValues)
+
 	return &stdLogHandler{
 		base:       base,
 		logger:     log.New(base.AtomicWriter(), "", h.logger.Flags()),
-		fields:     h.fields.Clone(),
+		keyValues:  kv,
 		withCaller: base.CallerEnabled(),
 		withTrace:  base.TraceEnabled(),
 		separator:  base.Separator(),
+	}
+}
+
+// writePairs writes key-value pairs to the provided strings.Builder.
+func writePairs(sb *strings.Builder, keyValues []any) {
+	for i := 0; i < len(keyValues)-1; i += 2 {
+		key, ok := keyValues[i].(string)
+		if !ok {
+			key = fmt.Sprint(keyValues[i])
+		}
+		sb.WriteString(" ")
+		sb.WriteString(key)
+		sb.WriteString("=")
+		fmt.Fprint(sb, keyValues[i+1])
 	}
 }
