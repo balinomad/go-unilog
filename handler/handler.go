@@ -40,6 +40,12 @@ type HandlerState interface {
 // Handler is the core adapter contract that all logger implementations must satisfy.
 type Handler interface {
 	// Handle processes a log record. Must handle nil context gracefully.
+	//
+	// IMPORTANT: The Record pointer and its slice fields (KeyValues) are only
+	// valid for the duration of this call. Handlers must not retain the
+	// *Record pointer or alias the KeyValues slice backing array after returning.
+	// If retention is needed, data must be copied.
+	//
 	// Returns error only for unrecoverable failures (disk full, etc.).
 	Handle(ctx context.Context, record *Record) error
 

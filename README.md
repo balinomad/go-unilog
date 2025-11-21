@@ -12,6 +12,15 @@
 
 Stop rewriting logging code when switching backends. Write once against `unilog.Logger`, swap implementations without touching application logic.
 
+## Key Features
+
+* **Unified Interface:** Decouple application code from logging implementation.
+* **Pluggable Adapters:** Support for popular logging libraries.
+* **Minimal Dependencies:** The core interface relies only on the standard library and a tiny, thread-safe writer utility [`atomicwriter`](https://github.com/balinomad/go-atomicwriter).
+* **High Performance:** Designed for hot paths with zero-allocation optimizations.
+* **Context Aware:** First-class support for `context.Context` cancellation and propagation.
+* **Structured Logging:** Log structured data with key-value pairs.
+
 ## Why unilog?
 
 **Problem**: Direct coupling to logging libraries creates vendor lock-in. Switching from `zerolog` to `slog` requires refactoring every log call site.
