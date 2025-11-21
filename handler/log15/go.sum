@@ -2,8 +2,8 @@ github.com/balinomad/go-atomicwriter v1.0.1 h1:jUzEy3hsJwF/Tj9fm3A4HN+P84RjgXJfu
 github.com/balinomad/go-atomicwriter v1.0.1/go.mod h1:QaEVyXViHIIu61AYG580rjMHsGx2D0/w4GP4//sDezs=
 github.com/balinomad/go-caller v1.0.0 h1:cuzQHupOmhfWIOWz+Mi9kSqPT70NLbe07lMNJ0hrIFk=
 github.com/balinomad/go-caller v1.0.0/go.mod h1:v+ANiNL+PwvzmZsfBJxq7OtIBFborLxlOnEx1TzxCYM=
-github.com/balinomad/go-unilog v0.0.0-20251119011455-1bd33c8d3b6d h1:lgIvSZ5Ft+rDcTqTcl7SMQIZcM7TxL4HGvy8hCHdd1k=
-github.com/balinomad/go-unilog v0.0.0-20251119011455-1bd33c8d3b6d/go.mod h1:CDFIQDrqCJZYH9dG3JwtXK0L0co6Oolx/BSsYiFdS0E=
+github.com/balinomad/go-unilog v0.0.0-20251121032513-732f0c1ea507 h1:KelXwToDrTWOEyE2VWUOV82NUTJ/A/0bknkjVWolop0=
+github.com/balinomad/go-unilog v0.0.0-20251121032513-732f0c1ea507/go.mod h1:CDFIQDrqCJZYH9dG3JwtXK0L0co6Oolx/BSsYiFdS0E=
 github.com/inconshreveable/log15/v3 v3.1.0 h1:k2mDgq/cBXG0zfVwoDUGvZfel7r+cGD3/6+5cFhM0Zg=
 github.com/inconshreveable/log15/v3 v3.1.0/go.mod h1:wBTTBTUs5OkuP5707+qsSwdJidDzxReILCwJgEb8lN8=
 github.com/mattn/go-colorable v0.1.14 h1:9A9LHSqF/7dyVVX6g0U9cwm9pG3kP9gSzcuIPHPsaIE=
