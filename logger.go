@@ -3,6 +3,7 @@ package unilog
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"runtime"
@@ -86,7 +87,7 @@ func NewAdvancedLogger(h handler.Handler) (AdvancedLogger, error) {
 // Skip must be non-negative; panics on negative skip (internal invariant).
 func newLogger(h handler.Handler, skip int) *logger {
 	if skip < 0 {
-		panic("newLogger: skip must be non-negative")
+		panic(fmt.Sprintf("newLogger: skip must be non-negative, got %d", skip))
 	}
 
 	// Apply skip to handler if supported
@@ -96,6 +97,9 @@ func newLogger(h handler.Handler, skip int) *logger {
 
 	features := h.Features()
 	state := h.HandlerState()
+	if state == nil {
+		panic("newLogger: handler implementation error, HandlerState must return non-nil")
+	}
 
 	l := &logger{
 		h:         h,
@@ -133,6 +137,11 @@ func (l *logger) log(ctx context.Context, level LogLevel, msg string, skipDelta 
 	needsPC := l.needsPC
 	needsSkip := l.needsSkip
 	l.mu.RUnlock()
+
+	// Ensure keyValues is even
+	if len(keyValues)%2 != 0 {
+		keyValues = keyValues[:len(keyValues)-1]
+	}
 
 	r := &handler.Record{
 		Time:      time.Now(),

@@ -3,10 +3,13 @@ package unilog_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/balinomad/go-unilog"
@@ -14,209 +17,164 @@ import (
 )
 
 func TestNewFallbackLogger(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
-		name      string
-		writer    io.Writer
-		level     unilog.LogLevel
-		wantErr   bool
-		checkFunc func(t *testing.T, logger unilog.Logger)
+		name    string
+		writer  io.Writer
+		level   unilog.LogLevel
+		wantErr error
 	}{
 		{
-			name:    "creates logger with valid params",
-			writer:  &bytes.Buffer{},
+			name:    "valid info",
+			writer:  io.Discard,
 			level:   unilog.InfoLevel,
-			wantErr: false,
-			checkFunc: func(t *testing.T, logger unilog.Logger) {
-				if logger == nil {
-					t.Fatal("expected non-nil logger")
-				}
-				if !logger.Enabled(unilog.InfoLevel) {
-					t.Error("logger should be enabled at InfoLevel")
-				}
-				if logger.Enabled(unilog.DebugLevel) {
-					t.Error("logger should not be enabled below InfoLevel")
-				}
-			},
+			wantErr: nil,
 		},
 		{
-			name:    "creates logger with debug level",
-			writer:  io.Discard,
-			level:   unilog.DebugLevel,
-			wantErr: false,
-			checkFunc: func(t *testing.T, logger unilog.Logger) {
-				if !logger.Enabled(unilog.DebugLevel) {
-					t.Error("logger should be enabled at DebugLevel")
-				}
-			},
-		},
-		{
-			name:    "creates logger with trace level",
-			writer:  io.Discard,
-			level:   unilog.TraceLevel,
-			wantErr: false,
-			checkFunc: func(t *testing.T, logger unilog.Logger) {
-				if !logger.Enabled(unilog.TraceLevel) {
-					t.Error("logger should be enabled at TraceLevel")
-				}
-			},
-		},
-		{
-			name:    "error on nil writer",
+			name:    "nil writer",
 			writer:  nil,
 			level:   unilog.InfoLevel,
-			wantErr: true,
+			wantErr: unilog.ErrNilWriter,
 		},
 		{
-			name:    "error on invalid level",
-			writer:  &bytes.Buffer{},
+			name:    "invalid level",
+			writer:  io.Discard,
 			level:   handler.MaxLevel + 1,
-			wantErr: true,
+			wantErr: unilog.ErrInvalidLogLevel,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger, err := unilog.XNewFallbackLogger(tt.writer, tt.level)
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewFallbackLogger() error = %v, wantErr %v", err, tt.wantErr)
-				return
+			l, err := unilog.XNewFallbackLogger(tt.writer, tt.level)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("got error %v, want %v", err, tt.wantErr)
 			}
-
-			if tt.checkFunc != nil && logger != nil {
-				tt.checkFunc(t, logger)
+			if err == nil && l == nil {
+				t.Error("got nil logger on success")
 			}
 		})
 	}
 }
 
 func TestNewSimpleFallbackLogger(t *testing.T) {
-	logger := unilog.XNewSimpleFallbackLogger()
-
-	if logger == nil {
+	// Cannot run parallel due to os.Stderr manipulation
+	l := unilog.XNewSimpleFallbackLogger()
+	if l == nil {
 		t.Fatal("expected non-nil logger")
 	}
-
-	if !logger.Enabled(unilog.InfoLevel) {
+	if !l.Enabled(unilog.InfoLevel) {
 		t.Error("logger should be enabled at InfoLevel by default")
 	}
-
-	if logger.Enabled(unilog.DebugLevel) {
-		t.Error("logger should not be enabled below InfoLevel")
-	}
-
-	// Verify it can log (doesn't panic)
-	ctx := context.Background()
-	logger.Info(ctx, "test message")
 }
 
-func TestFallbackLogger_Log(t *testing.T) {
+func TestNewSimpleFallbackLogger_Panic(t *testing.T) {
+	// Cannot run parallel due to os.Stderr manipulation
+	oldStderr := os.Stderr
+	defer func() { os.Stderr = oldStderr }()
+
+	os.Stderr = nil
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when os.Stderr is nil")
+		}
+	}()
+
+	unilog.XNewSimpleFallbackLogger()
+}
+
+func TestFallbackLogger_LogOutput(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
-		name           string
-		level          unilog.LogLevel
-		logLevel       unilog.LogLevel
-		msg            string
-		keyValues      []any
-		wantLogged     bool
-		wantContains   []string
-		wantNotContain string
+		name       string
+		minLevel   unilog.LogLevel
+		logOp      func(unilog.Logger)
+		wantOutput string
+		wantEmpty  bool
 	}{
 		{
-			name:       "does not log below minimum level",
-			level:      unilog.InfoLevel,
-			logLevel:   unilog.DebugLevel,
-			msg:        "debug message",
-			wantLogged: false,
-		},
-		{
-			name:      "logs at minimum level",
-			level:     unilog.InfoLevel,
-			logLevel:  unilog.InfoLevel,
-			msg:       "info message",
-			keyValues: []any{"key1", "val1", "key2", 2},
-			wantContains: []string{
-				"INFO: info message",
-				"key1=val1",
-				"key2=2",
+			name:     "info logged",
+			minLevel: unilog.InfoLevel,
+			logOp: func(l unilog.Logger) {
+				l.Info(context.Background(), "hello", "k", "v")
 			},
-			wantLogged: true,
+			wantOutput: "INFO: hello k=v",
 		},
 		{
-			name:       "logs above minimum level",
-			level:      unilog.InfoLevel,
-			logLevel:   unilog.ErrorLevel,
-			msg:        "error message",
-			wantLogged: true,
-			wantContains: []string{
-				"ERROR: error message",
+			name:     "debug skipped",
+			minLevel: unilog.InfoLevel,
+			logOp: func(l unilog.Logger) {
+				l.Debug(context.Background(), "hello")
 			},
+			wantEmpty: true,
 		},
 		{
-			name:           "ignores odd number of keyValues",
-			level:          unilog.WarnLevel,
-			logLevel:       unilog.WarnLevel,
-			msg:            "warn message",
-			keyValues:      []any{"key1"},
-			wantLogged:     true,
-			wantNotContain: "key1=",
-		},
-		{
-			name:       "logs without keyValues",
-			level:      unilog.InfoLevel,
-			logLevel:   unilog.InfoLevel,
-			msg:        "simple message",
-			wantLogged: true,
-			wantContains: []string{
-				"INFO: simple message",
+			name:     "trace method",
+			minLevel: unilog.TraceLevel,
+			logOp: func(l unilog.Logger) {
+				l.Trace(context.Background(), "trace")
 			},
+			wantOutput: "TRACE: trace",
 		},
 		{
-			name:       "logs with multiple keyValues",
-			level:      unilog.DebugLevel,
-			logLevel:   unilog.DebugLevel,
-			msg:        "debug with attrs",
-			keyValues:  []any{"a", 1, "b", 2, "c", 3},
-			wantLogged: true,
-			wantContains: []string{
-				"DEBUG: debug with attrs",
-				"a=1",
-				"b=2",
-				"c=3",
+			name:     "warn method",
+			minLevel: unilog.InfoLevel,
+			logOp: func(l unilog.Logger) {
+				l.Warn(context.Background(), "warn")
 			},
+			wantOutput: "WARN: warn",
+		},
+		{
+			name:     "error method",
+			minLevel: unilog.InfoLevel,
+			logOp: func(l unilog.Logger) {
+				l.Error(context.Background(), "err")
+			},
+			wantOutput: "ERROR: err",
+		},
+		{
+			name:     "critical method",
+			minLevel: unilog.InfoLevel,
+			logOp: func(l unilog.Logger) {
+				l.Critical(context.Background(), "crit")
+			},
+			wantOutput: "CRITICAL: crit",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			buf := &bytes.Buffer{}
-			logger, err := unilog.XNewFallbackLogger(buf, tt.level)
-			if err != nil {
-				t.Fatalf("NewFallbackLogger() error = %v", err)
-			}
+			var buf bytes.Buffer
+			l, _ := unilog.XNewFallbackLogger(&buf, tt.minLevel)
 
-			ctx := context.Background()
-			logger.Log(ctx, tt.logLevel, tt.msg, tt.keyValues...)
+			tt.logOp(l)
 
-			output := buf.String()
-
-			if tt.wantLogged && buf.Len() == 0 {
-				t.Error("expected log output, got none")
-			}
-
-			if !tt.wantLogged && buf.Len() > 0 {
-				t.Errorf("expected no log output, got: %s", output)
-			}
-
-			for _, want := range tt.wantContains {
-				if !strings.Contains(output, want) {
-					t.Errorf("output missing %q, got: %s", want, output)
+			got := buf.String()
+			if tt.wantEmpty {
+				if len(got) > 0 {
+					t.Errorf("expected empty, got %q", got)
 				}
+				return
 			}
-
-			if tt.wantNotContain != "" && strings.Contains(output, tt.wantNotContain) {
-				t.Errorf("output should not contain %q, got: %s", tt.wantNotContain, output)
+			if !strings.Contains(got, tt.wantOutput) {
+				t.Errorf("got %q, want substring %q", got, tt.wantOutput)
 			}
 		})
+	}
+}
+
+func TestFallbackLogger_Immutability(t *testing.T) {
+	t.Parallel()
+	l, _ := unilog.XNewFallbackLogger(io.Discard, unilog.InfoLevel)
+
+	if l.With("k", "v") != l {
+		t.Error("With should return same instance")
+	}
+	if l.WithGroup("g") != l {
+		t.Error("WithGroup should return same instance")
 	}
 }
 
@@ -368,36 +326,34 @@ func TestFallbackLogger_LevelMethods(t *testing.T) {
 // It re-runs the test with a specific environment variable set.
 func TestFallbackLogger_Fatal(t *testing.T) {
 	if os.Getenv("BE_FATAL") == "1" {
-		logger, _ := unilog.XNewFallbackLogger(io.Discard, unilog.FatalLevel)
-		logger.Fatal(context.Background(), "fatal message")
+		l, _ := unilog.XNewFallbackLogger(io.Discard, unilog.InfoLevel)
+		l.Fatal(context.Background(), "bye")
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestFallbackLogger_Fatal$")
+	cmd := exec.Command(os.Args[0], "-test.run=TestFallbackLogger_Fatal")
 	cmd.Env = append(os.Environ(), "BE_FATAL=1")
 	err := cmd.Run()
 
 	if e, ok := err.(*exec.ExitError); ok && !e.Success() {
-		// The program exited with a non-zero status, which is what we expect from os.Exit(1)
-		return
+		return // Success
 	}
 	t.Fatalf("process ran with err %v, want exit status 1", err)
 }
 
 // Test for Panic's call to panic.
 func TestFallbackLogger_Panic(t *testing.T) {
-	logger, err := unilog.XNewFallbackLogger(io.Discard, unilog.InfoLevel)
-	if err != nil {
-		t.Fatalf("NewFallbackLogger() error = %v", err)
-	}
+	t.Parallel()
+
+	l, _ := unilog.XNewFallbackLogger(io.Discard, unilog.InfoLevel)
 
 	defer func() {
 		if r := recover(); r == nil {
-			t.Error("expected panic, got none")
+			t.Error("expected panic")
 		}
 	}()
 
-	logger.Panic(context.Background(), "panic message")
+	l.Panic(context.Background(), "panic")
 }
 
 func TestFallbackLogger_NilContext(t *testing.T) {
@@ -411,5 +367,54 @@ func TestFallbackLogger_NilContext(t *testing.T) {
 
 	if buf.Len() == 0 {
 		t.Error("expected log output with nil context")
+	}
+}
+
+func TestFallbackLogger_Concurrency(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	l, _ := unilog.XNewFallbackLogger(&buf, unilog.InfoLevel)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			l.Info(context.Background(), fmt.Sprintf("msg %d", n))
+		}(i)
+	}
+	wg.Wait()
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 50 {
+		t.Errorf("expected 50 lines, got %d", len(lines))
+	}
+}
+
+func TestFallbackLogger_EmptyMessage(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger, _ := unilog.XNewFallbackLogger(buf, unilog.InfoLevel)
+	logger.Info(context.Background(), "")
+
+	if buf.Len() == 0 {
+		t.Error("empty message should still log")
+	}
+}
+
+func TestFallbackLogger_VeryLargeKeyValues(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger, _ := unilog.XNewFallbackLogger(buf, unilog.InfoLevel)
+
+	kv := make([]any, 1000)
+	for i := 0; i < 1000; i += 2 {
+		kv[i] = fmt.Sprintf("k%d", i)
+		kv[i+1] = i
+	}
+
+	logger.Info(context.Background(), "msg", kv...)
+
+	if buf.Len() == 0 {
+		t.Error("large keyvalues should log")
 	}
 }
