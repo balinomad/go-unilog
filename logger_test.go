@@ -721,3 +721,81 @@ func getMockHandler(t *testing.T, l unilog.Logger) *mockFullHandler {
 	}
 	return mh
 }
+func TestLogger_WithCallerSkip_Optimization(t *testing.T) {
+	t.Parallel()
+
+	h := newMockHandler()
+	// Use AdvancedLogger to access WithCallerSkip
+	l, _ := unilog.NewAdvancedLogger(h)
+
+	t.Run("returns same instance when skip unchanged", func(t *testing.T) {
+		// Default user skip is 0. Requesting 0 should return the same instance.
+		if l.WithCallerSkip(0) != l {
+			t.Error("WithCallerSkip(0) should return same logger instance")
+		}
+	})
+
+	t.Run("clamps negative skip and returns same instance", func(t *testing.T) {
+		// Requesting -1 should be clamped to 0.
+		// Since current is 0, it should return the same instance.
+		if l.WithCallerSkip(-1) != l {
+			t.Error("WithCallerSkip(-1) should clamp to 0 and return same logger instance")
+		}
+	})
+
+	t.Run("returns new instance when skip changes", func(t *testing.T) {
+		if l.WithCallerSkip(1) == l {
+			t.Error("WithCallerSkip(1) should return new logger instance")
+		}
+	})
+}
+func TestLogger_Fatal_Coverage(t *testing.T) {
+	// NOTE: Do NOT call t.Parallel() here.
+	// We are modifying a package-level variable (osExit).
+
+	var exitCode int
+	var exitCalled bool
+
+	// Swapping the exit function
+	restore := unilog.ReplaceExit(func(code int) {
+		exitCode = code
+		exitCalled = true
+	})
+	defer restore()
+
+	h := newMockHandler()
+	l, _ := unilog.NewLogger(h)
+
+	// Execute Fatal. This should call our mock instead of os.Exit.
+	l.Fatal(context.Background(), "fatal message")
+
+	if !exitCalled {
+		t.Error("expected os.Exit to be called via mock")
+	}
+	if exitCode != 1 {
+		t.Errorf("expected exit code 1, got %d", exitCode)
+	}
+}
+
+func TestLogger_CallerCapture_Exhaustion(t *testing.T) {
+	t.Parallel()
+
+	// Create a handler that demands native caller capture (needsPC=true)
+	h := newMockHandler()
+	h.state = &mockHandlerState{caller: true}
+	h.features = handler.NewHandlerFeatures(0) // Ensure FeatNativeCaller is OFF
+
+	// Create logger and set an impossibly high skip to trigger runtime.Callers returning 0
+	l, _ := unilog.NewAdvancedLogger(h)
+	lSkip := l.WithCallerSkip(10000) // Huge skip
+
+	// This triggers the log() path where runtime.Callers returns 0
+	lSkip.Info(context.Background(), "test")
+
+	wh := getMockHandler(t, lSkip)
+	r := wh.LastRecord()
+
+	if r.PC != 0 {
+		t.Errorf("expected PC=0 due to stack exhaustion, got %v", r.PC)
+	}
+}

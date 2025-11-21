@@ -33,3 +33,12 @@ func XLoggerHandler(l Logger) handler.Handler {
 	}
 	return nil
 }
+
+// ReplaceExit allows replacing the internal osExit function for testing.
+// Returns a function to restore the original behavior.
+// NOTE: This modifies global state; tests using this MUST NOT run in parallel.
+func ReplaceExit(fn func(int)) func() {
+	original := osExit
+	osExit = fn
+	return func() { osExit = original }
+}

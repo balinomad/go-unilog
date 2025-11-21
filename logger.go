@@ -13,6 +13,10 @@ import (
 	"github.com/balinomad/go-unilog/handler"
 )
 
+// osExit allows swapping the exit function for testing.
+// It is a package-level variable, not exported publicly, but accessible to unilog tests.
+var osExit = os.Exit
+
 // recordPool recycles Record structs to reduce GC pressure.
 var recordPool = sync.Pool{
 	New: func() any {
@@ -192,7 +196,7 @@ func (l *logger) log(ctx context.Context, level LogLevel, msg string, skipDelta 
 	case FatalLevel:
 		// Note: specific handlers (like zap) might have their own
 		// exit logic, but we enforce it here to guarantee contract.
-		os.Exit(1)
+		osExit(1)
 	case PanicLevel:
 		panic(msg)
 	}
