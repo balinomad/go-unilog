@@ -93,12 +93,26 @@ func (h *mockFullHandler) recordOp(op string, val any) {
 	h.history = append(h.history, op)
 }
 
+// Handle captures the record by value to ensure safety against sync.Pool recycling.
 func (h *mockFullHandler) Handle(_ context.Context, r *handler.Record) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	h.callCount++
-	h.lastRecord = r
+
+	// DEEP COPY: Create a new Record instance and copy fields.
+	// Since r is pooled, we cannot keep the pointer 'r'.
+	recCopy := *r
+
+	// Copy slice to prevent shared backing array issues if needed,
+	// though strictly the logger doesn't mutate the backing array,
+	// it's safer for tests to own their data.
+	if r.KeyValues != nil {
+		recCopy.KeyValues = make([]any, len(r.KeyValues))
+		copy(recCopy.KeyValues, r.KeyValues)
+	}
+
+	h.lastRecord = &recCopy
 	return h.errHandle
 }
 

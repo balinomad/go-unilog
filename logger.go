@@ -13,6 +13,13 @@ import (
 	"github.com/balinomad/go-unilog/handler"
 )
 
+// recordPool recycles Record structs to reduce GC pressure.
+var recordPool = sync.Pool{
+	New: func() any {
+		return &handler.Record{}
+	},
+}
+
 // logger provides the core Logger implementation that wraps handler.Handler.
 //
 // Concurrency Model:
@@ -143,12 +150,14 @@ func (l *logger) log(ctx context.Context, level LogLevel, msg string, skipDelta 
 		keyValues = keyValues[:len(keyValues)-1]
 	}
 
-	r := &handler.Record{
-		Time:      time.Now(),
-		Level:     level,
-		Message:   msg,
-		KeyValues: keyValues,
-	}
+	// Use sync.Pool to avoid heap allocations
+	r := recordPool.Get().(*handler.Record)
+	r.Time = time.Now()
+	r.Level = level
+	r.Message = msg
+	r.KeyValues = keyValues
+	r.PC = 0
+	r.Skip = 0
 
 	// Handle caller detection
 	skip := currentSkip + skipDelta
@@ -172,9 +181,17 @@ func (l *logger) log(ctx context.Context, level LogLevel, msg string, skipDelta 
 			"handler_error", err.Error())
 	}
 
+	// Cleanup and return to pool
+	// Important: We do not nullify KeyValues here as the slice backing array
+	// might be retained by the caller of Log(). We just detach the pointer.
+	r.KeyValues = nil
+	recordPool.Put(r)
+
 	// Handle termination levels
 	switch level {
 	case FatalLevel:
+		// Note: specific handlers (like zap) might have their own
+		// exit logic, but we enforce it here to guarantee contract.
 		os.Exit(1)
 	case PanicLevel:
 		panic(msg)
