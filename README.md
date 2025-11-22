@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/github/license/balinomad/go-unilog)](./LICENSE)
 [![Go](https://github.com/balinomad/go-unilog/actions/workflows/go.yml/badge.svg)](https://github.com/balinomad/go-unilog/actions/workflows/go.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/balinomad/go-unilog)](https://goreportcard.com/report/github.com/balinomad/go-unilog)
-[![codecov](https://codecov.io/github/balinomad/go-unilog/graph/badge.svg?token=L1K68IIN51)](https://codecov.io/github/balinomad/go-unilog)
+[![codecov](https://codecov.io/github/balinomad/go-unilog/graph/badge.svg?token=H04BI4TX2C)](https://codecov.io/github/balinomad/go-unilog)
 
 # unilog
 

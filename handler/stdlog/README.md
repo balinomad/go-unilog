@@ -1,4 +1,10 @@
-# stdlog Handler
+[![GoDoc](https://pkg.go.dev/badge/github.com/balinomad/go-unilog/handler/stdlog?status.svg)](https://pkg.go.dev/github.com/balinomad/go-unilog/handler/stdlog?tab=doc)
+[![GoMod](https://img.shields.io/github/go-mod/go-version/balinomad/go-unilog)](https://github.com/balinomad/go-unilog)
+[![License](https://img.shields.io/github/license/balinomad/go-unilog)](./LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/balinomad/go-unilog/handler/stdlog)](https://goreportcard.com/report/github.com/balinomad/go-unilog/handler/stdlog)
+[![codecov](https://codecov.io/github/balinomad/go-unilog/graph/badge.svg?token=H04BI4TX2C&flag=handler-stdlog)](https://codecov.io/github/balinomad/go-unilog/tree/main/handler/stdlog)
+
+# Handler: stdlog
 
 Adapter for Go's standard library [`log`](https://pkg.go.dev/log) package with structured attribute support.
 

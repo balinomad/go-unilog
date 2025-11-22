@@ -1,4 +1,10 @@
-# slog Handler
+[![GoDoc](https://pkg.go.dev/badge/github.com/balinomad/go-unilog/handler/slog?status.svg)](https://pkg.go.dev/github.com/balinomad/go-unilog/handler/slog?tab=doc)
+[![GoMod](https://img.shields.io/github/go-mod/go-version/balinomad/go-unilog)](https://github.com/balinomad/go-unilog)
+[![License](https://img.shields.io/github/license/balinomad/go-unilog)](./LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/balinomad/go-unilog/handler/slog)](https://goreportcard.com/report/github.com/balinomad/go-unilog/handler/slog)
+[![codecov](https://codecov.io/github/balinomad/go-unilog/graph/badge.svg?token=H04BI4TX2C&flag=handler-slog)](https://codecov.io/github/balinomad/go-unilog/tree/main/handler/slog)
+
+# Handler: slog
 
 Adapter for Go's standard library [`log/slog`](https://pkg.go.dev/log/slog) logger.
 
