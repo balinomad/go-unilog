@@ -17,12 +17,12 @@ var (
 
 // NewAtomicWriterError returns an error wrapping ErrAtomicWriterFail.
 func NewAtomicWriterError(err error) error {
-	return fmt.Errorf("%w: %w", ErrAtomicWriterFail, err)
+	return errors.Join(ErrAtomicWriterFail, err)
 }
 
 // NewOptionApplyError returns an error wrapping ErrOptionApplyFailed.
 func NewOptionApplyError(option string, err error) error {
-	return fmt.Errorf("%w (%s): %w", ErrOptionApplyFailed, option, err)
+	return errors.Join(fmt.Errorf("%s: %w", option, ErrOptionApplyFailed), err)
 }
 
 // NewInvalidFormatError returns an error wrapping ErrInvalidFormat.
