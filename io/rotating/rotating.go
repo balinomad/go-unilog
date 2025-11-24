@@ -4,8 +4,8 @@
 //
 //	rotating.RotatingWriter is a simple, concurrent-safe writer that appends to a file
 //	and rotates it when it grows beyond a configured size. Rotation is performed
-//	durably (fsync on files and best-effort directory sync) using an atomic-style
-//	swap so that after rotation there is always a usable active file.
+//	durably (fsync on files) using atomic renames so that after rotation there is
+//	always a usable active file.
 //
 // Intended use
 //   - General-purpose application logging where rotations are relatively infrequent
@@ -17,8 +17,7 @@
 //
 // Guarantees & limitations
 //   - Rotation is durable on typical POSIX filesystems: we attempt to fsync() the
-//     current file before rotation, fsync() the new temporary file, perform atomic
-//     renames, and fsync() the containing directory (best-effort). Exact guarantees
+//     current file before rotation, then perform atomic renames. Exact guarantees
 //     may vary with underlying filesystem semantics (NFS, overlay filesystems, and
 //     some Windows filesystems differ).
 //   - The writer is safe for multiple goroutines calling Write concurrently.
@@ -37,15 +36,15 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // options holds the configuration for a RotatingWriter.
 type options struct {
 	maxSizeMB  int         // 0 => no size-based rotation
-	maxBackups int         // 0 => do not keep backups (rotated file removed)
+	maxBackups int         // 0 => keep all backups (no cleanup)
 	errHandler func(error) // optional non-fatal error handler
 }
 
@@ -93,7 +92,8 @@ type RotatingWriter struct {
 var _ io.WriteCloser = (*RotatingWriter)(nil)
 
 // New constructs a RotatingWriter.
-// filename must be non-empty. Options customize behavior; defaults:
+// filename must be non-empty. Options customize behavior.
+// Defaults: no size-based rotation, 7 backups retained, errors to stderr.
 func New(filename string, opts ...Option) (*RotatingWriter, error) {
 	if filename == "" {
 		return nil, fmt.Errorf("filename cannot be empty")
@@ -134,6 +134,11 @@ func (w *RotatingWriter) Write(p []byte) (n int, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	// Reject writes after Close
+	if w.file == nil {
+		return 0, fmt.Errorf("write attempt on closed file")
+	}
+
 	// If rotation is needed before writing, try to rotate
 	if w.maxSize > 0 && w.currentSize+int64(len(p)) > w.maxSize {
 		if rerr := w.rotate(); rerr != nil {
@@ -142,18 +147,13 @@ func (w *RotatingWriter) Write(p []byte) (n int, err error) {
 				if oerr := w.openExistingOrNew(); oerr != nil {
 					// Can't reopen: return rotation and reopen errors
 					return 0, errors.Join(
-						fmt.Errorf("rotation failed: %w", rerr),
-						fmt.Errorf("reopen failed: %w", oerr))
+						fmt.Errorf("reopen failed: %w", oerr),
+						fmt.Errorf("rotation failed: %w", rerr))
 				}
 			}
 			// File handle exists: proceed with write despite rotation failure
 			w.report(fmt.Errorf("rotation failed: %w", rerr))
 		}
-	}
-
-	// Panic guard: should never happen if rotate/openExistingOrNew work correctly
-	if w.file == nil {
-		return 0, fmt.Errorf("internal error: file handle is nil")
 	}
 
 	n, err = w.file.Write(p)
@@ -199,27 +199,24 @@ func (w *RotatingWriter) openExistingOrNew() error {
 	// Ensure the directory exists
 	dir := filepath.Dir(w.filename)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	// Get file info to check current size
-	info, err := os.Stat(w.filename)
-	if err == nil {
-		// File exists, set current size
-		w.currentSize = info.Size()
-	} else if os.IsNotExist(err) {
-		w.currentSize = 0
-	} else {
-		return fmt.Errorf("failed to get file info: %w", err)
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
 	// Open the file for writing, create if it doesn't exist, and append
 	f, err := os.OpenFile(w.filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
+		return fmt.Errorf("failed to open file %s: %w", w.filename, err)
 	}
-	w.file = f
 
+	// Get current size from opened file
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return fmt.Errorf("failed to stat file %s: %w", w.filename, err)
+	}
+
+	w.file = f
+	w.currentSize = info.Size()
 	return nil
 }
 
@@ -230,12 +227,9 @@ func (w *RotatingWriter) openExistingOrNew() error {
 // Steps:
 //   - try to fsync current file (best-effort)
 //   - close current file
-//   - create a temporary file in same dir, fsync it and close it
-//   - rename current -> .1
-//   - rename tmp -> current
-//   - fsync directory (best-effort)
-//   - remove old backups beyond maxBackups (best-effort)
-//   - reopen active file
+//   - rename current -> X.TIMESTAMP
+//   - create new active file
+//   - trigger async cleanup if maxBackups > 0
 func (w *RotatingWriter) rotate() error {
 	// Best-effort sync current file
 	if err := w.trySync(); err != nil {
@@ -248,55 +242,89 @@ func (w *RotatingWriter) rotate() error {
 		return fmt.Errorf("failed to close file before rotation: %w", err)
 	}
 
-	// If maxBackups is 0, just remove the current file and create a new one
-	if w.maxBackups == 0 {
-		if err := os.Remove(w.filename); err != nil && !os.IsNotExist(err) {
-			// If we can't remove the file, try to reopen it to maintain functionality
-			if reopenErr := w.openExistingOrNew(); reopenErr != nil {
-				// Both remove and reopen failed: this is a serious error
-				return errors.Join(
-					fmt.Errorf("failed to remove log file: %w", err),
-					fmt.Errorf("failed to reopen log file: %w", reopenErr))
-			}
-			// Remove failed but reopen succeeded: writer is functional but rotation didn't work as expected
-			w.report(fmt.Errorf("failed to remove log file during rotation: %w", err))
-			return nil
-		}
-		// Remove succeeded (or file didn't exist), now create new file
-		return w.openExistingOrNew()
-	}
+	// Generate timestamp-based backup filename
+	timestamp := time.Now().Format("2006-01-02T15-04-05.000000")
+	backupFilename := fmt.Sprintf("%s.%s", w.filename, timestamp)
 
-	// Rotate existing backups in reverse order to avoid overwriting
-	for i := w.maxBackups; i > 1; i-- {
-		oldPath := fmt.Sprintf("%s.%d", w.filename, i-1)
-		newPath := fmt.Sprintf("%s.%d", w.filename, i)
-
-		// Check if the old backup file exists before trying to rename it
-		if _, err := os.Stat(oldPath); err == nil {
-			if err := safeRename(oldPath, newPath); err != nil {
-				// Non-critical error: log it and continue
-				w.report(fmt.Errorf("failed to rotate backup file %s: %w", oldPath, err))
-			}
-		}
-	}
-
-	// Rename the current log file to a backup name
-	backupFilename := w.filename + ".1"
+	// Rename current file to timestamped backup
 	if err := safeRename(w.filename, backupFilename); err != nil {
 		// If rename fails, try to reopen the original file to avoid losing logs
-		_ = w.openExistingOrNew()
+		if reopenErr := w.openExistingOrNew(); reopenErr != nil {
+			return errors.Join(
+				fmt.Errorf("failed to reopen log file: %w", reopenErr),
+				fmt.Errorf("failed to rename log file: %w", err))
+		}
+		// Reopen succeeded but rotation failed
 		return fmt.Errorf("failed to rename log file: %w", err)
 	}
 
-	// Remove backups that exceed the maxBackups limit
+	// Trigger async cleanup if maxBackups > 0
 	if w.maxBackups > 0 {
-		if err := removeExtraBackups(w.filename, w.maxBackups); err != nil {
-			// Non-fatal: rotation succeeded, but cleanup failed
-			w.report(fmt.Errorf("rotation succeeded but cleanup failed: %w", err))
-		}
+		go w.cleanup()
 	}
 
 	return w.openExistingOrNew()
+}
+
+// cleanup removes old backup files beyond maxBackups limit.
+// Must be called asynchronously to avoid blocking Write.
+func (w *RotatingWriter) cleanup() {
+	dir := filepath.Dir(w.filename)
+	base := filepath.Base(w.filename)
+	prefix := base + "."
+
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		w.report(fmt.Errorf("cleanup failed to read directory: %w", err))
+		return
+	}
+
+	type backup struct {
+		name      string
+		timestamp string
+	}
+
+	var backups []backup
+
+	// Find all backup files with valid timestamp suffixes
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+
+		suffix := name[len(prefix):]
+
+		// Validate by attempting to parse as timestamp
+		if _, err := time.Parse("2006-01-02T15-04-05.000000", suffix); err != nil {
+			continue
+		}
+
+		backups = append(backups, backup{
+			name:      name,
+			timestamp: suffix,
+		})
+	}
+
+	if len(backups) <= w.maxBackups {
+		return
+	}
+
+	// Sort by timestamp descending (newest first)
+	sort.Slice(backups, func(i, j int) bool {
+		return backups[i].timestamp > backups[j].timestamp
+	})
+
+	// Remove oldest backups beyond maxBackups
+	for _, b := range backups[w.maxBackups:] {
+		path := filepath.Join(dir, b.name)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			w.report(fmt.Errorf("cleanup failed to remove %s: %w", b.name, err))
+		}
+	}
 }
 
 // trySync calls Sync on the underlying *os.File if possible.
@@ -335,71 +363,6 @@ func (w *RotatingWriter) report(err error) {
 		}()
 		handler(err)
 	}()
-}
-
-// removeExtraBackups removes rotated files with numeric suffixes beyond maxBackups.
-// Files expected to be named "<basename>.N" where N is a positive integer.
-func removeExtraBackups(fullpath string, maxBackups int) error {
-	dir := filepath.Dir(fullpath)
-	base := filepath.Base(fullpath)
-
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("failed to read directory for cleanup: %w", err)
-	}
-
-	type entry struct {
-		name  string
-		index int
-		path  string
-	}
-
-	var entries []entry
-	prefix := base + "."
-
-	// Find all files with the expected prefix and numeric suffix
-	for _, e := range ents {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if !strings.HasPrefix(name, prefix) {
-			continue
-		}
-		idxStr := name[len(prefix):]
-		idx, err := strconv.Atoi(idxStr)
-		if err != nil || idx < 1 {
-			continue
-		}
-		entries = append(entries, entry{
-			name:  name,
-			index: idx,
-			path:  filepath.Join(dir, name),
-		})
-	}
-
-	if len(entries) <= maxBackups {
-		return nil
-	}
-
-	// Sort by numeric index ascending (.1 is newest, higher numbers are older)
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].index < entries[j].index
-	})
-
-	// Remove entries beyond maxBackups (highest-indexed/oldest files)
-	var errs []error
-	for _, e := range entries[maxBackups:] {
-		if rmErr := os.Remove(e.path); rmErr != nil && !os.IsNotExist(rmErr) {
-			errs = append(errs, fmt.Errorf("failed to remove %s: %w", e.name, rmErr))
-		}
-	}
-
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-
-	return nil
 }
 
 // safeRename is a wrapper around os.Rename that first removes the destination
