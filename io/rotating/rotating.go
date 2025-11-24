@@ -78,14 +78,17 @@ func WithErrorHandler(h func(error)) Option {
 
 // RotatingWriter is an io.WriteCloser that rotates log files when they reach a specified size.
 // It is safe for concurrent use by multiple goroutines.
+//
+// Fields are not exported and should not be accessed directly.
+// Use the provided methods to interact with the writer.
 type RotatingWriter struct {
-	mu          sync.Mutex
-	filename    string
-	maxSize     int64 // bytes; 0 => no rotation
-	maxBackups  int   // 0 => no cleanup
-	file        io.WriteCloser
-	currentSize int64
-	errHandler  func(error) // optional error handler, fallback to stderr
+	mu          sync.Mutex     // Protects all mutable state
+	filename    string         // Active log file path
+	maxSize     int64          // bytes; 0 => no rotation
+	maxBackups  int            // 0 => no cleanup
+	file        io.WriteCloser // Active log file handle
+	currentSize int64          // Current file size in bytes
+	errHandler  func(error)    // Optional error handler, fallback to stderr
 }
 
 // Ensure interface conformance.
@@ -157,10 +160,13 @@ func (w *RotatingWriter) Write(p []byte) (n int, err error) {
 	}
 
 	n, err = w.file.Write(p)
-	if n > 0 {
-		w.currentSize += int64(n)
+	if err != nil {
+		// Don't update currentSize on error to avoid inflating it
+		return n, err
 	}
-	return n, err
+	w.currentSize += int64(n)
+
+	return n, nil
 }
 
 // Rotate triggers log file rotation manually. It is safe to call multiple times.
@@ -193,33 +199,6 @@ func (w *RotatingWriter) close() error {
 	return err
 }
 
-// openExistingOrNew opens the active file for appending or creates it if it does not exist.
-// Caller must hold the lock.
-func (w *RotatingWriter) openExistingOrNew() error {
-	// Ensure the directory exists
-	dir := filepath.Dir(w.filename)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", dir, err)
-	}
-
-	// Open the file for writing, create if it doesn't exist, and append
-	f, err := os.OpenFile(w.filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("failed to open file %s: %w", w.filename, err)
-	}
-
-	// Get current size from opened file
-	info, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return fmt.Errorf("failed to stat file %s: %w", w.filename, err)
-	}
-
-	w.file = f
-	w.currentSize = info.Size()
-	return nil
-}
-
 // rotate performs a durable atomic-style rotation while lock is held.
 // Caller must hold the lock.
 // Some rotation errors are reported and the writer may still be usable.
@@ -242,7 +221,10 @@ func (w *RotatingWriter) rotate() error {
 		return fmt.Errorf("failed to close file before rotation: %w", err)
 	}
 
-	// Generate timestamp-based backup filename
+	// Generate timestamp-based backup filename.
+	// Collision risk is negligible in practice: requires rotating twice within
+	// the same microsecond on the same machine, which is prevented by the serial
+	// nature of rotate() under mutex lock.
 	timestamp := time.Now().Format("2006-01-02T15-04-05.000000")
 	backupFilename := fmt.Sprintf("%s.%s", w.filename, timestamp)
 
@@ -269,8 +251,13 @@ func (w *RotatingWriter) rotate() error {
 // cleanup removes old backup files beyond maxBackups limit.
 // Must be called asynchronously to avoid blocking Write.
 func (w *RotatingWriter) cleanup() {
-	dir := filepath.Dir(w.filename)
-	base := filepath.Base(w.filename)
+	w.mu.Lock()
+	filename := w.filename
+	maxBackups := w.maxBackups
+	w.mu.Unlock()
+
+	dir := filepath.Dir(filename)
+	base := filepath.Base(filename)
 	prefix := base + "."
 
 	ents, err := os.ReadDir(dir)
@@ -319,7 +306,7 @@ func (w *RotatingWriter) cleanup() {
 	})
 
 	// Remove oldest backups beyond maxBackups
-	for _, b := range backups[w.maxBackups:] {
+	for _, b := range backups[maxBackups:] {
 		path := filepath.Join(dir, b.name)
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			w.report(fmt.Errorf("cleanup failed to remove %s: %w", b.name, err))
@@ -363,6 +350,33 @@ func (w *RotatingWriter) report(err error) {
 		}()
 		handler(err)
 	}()
+}
+
+// openExistingOrNew opens the active file for appending or creates it if it does not exist.
+// Caller must hold the lock.
+func (w *RotatingWriter) openExistingOrNew() error {
+	// Ensure the directory exists
+	dir := filepath.Dir(w.filename)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
+	}
+
+	// Open the file for writing, create if it doesn't exist, and append
+	f, err := os.OpenFile(w.filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", w.filename, err)
+	}
+
+	// Get current size from opened file
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return fmt.Errorf("failed to stat file %s: %w", w.filename, err)
+	}
+
+	w.file = f
+	w.currentSize = info.Size()
+	return nil
 }
 
 // safeRename is a wrapper around os.Rename that first removes the destination
